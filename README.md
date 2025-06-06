@@ -39,13 +39,17 @@ Before running each `.R` file, make sure the working directory is set to the dir
         - file `all_Y_x_df.csv` includes the final set of Y and X used for building predictive algorithms;
         - files named `pred_[outcome]_df.csv` are predictions at all observations from the three experimental algorithms discussed in Table 2 of Obermeyer et al. (2019), where `[outcome]`$\in$`{"gagne_sum_t", "log_cost_avoidable", "log_cost"}` corresponding to, respectively, the number of active chronic conditions, avoidable costs, and total costs.
 
-- Folder `simulation` includes the following R scripts for running the simulations:
-    * file `simulation-DGPplot.Rmd` generates Figure 5, and files `truth_balance.csv` and `truth_rskew.csv` for use in the other simulation scripts;
-    * files named `test[number]n[size]k[kink-status].R` generate results reported in Table 1 for `[kink-status]` being either an empty string (for the case of no kink) or "kink" (for the case where kink is present), `[number]`$\in \{1, 2, 3\}$, where
+- Folder `simulation` includes the following sub-folders for running the simulations:
+    * folder `code` contains code that generates the results reported in Table 1:
+      - folder `test1-weak-skew` includes code for the weak group skew test that has
+        * files named `test1n[size].R` for `[size]`$\in${1, 5, 10} denoting the sample size in thousands;
+      - files named `test[number]n[size].R` that generate results reported in Table 1 for `[number]`$\in${1, 2, 3}, where
         - $1$ stands for the weak group skew test;
         - $2$ stands for the LDA test;
-        - $3$ stands for the distance-to-$F$ test;
-        and `[size]`$\in \{1, 5, 10, 50\}$ denoting the sample size in thousands.
+        - $3$ stands for the distance-to-F test;
+        and `[size]`$\in${1, 5, 10} denoting the sample size in thousands.
+      - file `simulation-DGPplot.R` that calls `../results/simulation-DGPplot.Rmd` to generate `../results/simulation-DGPplot.html` containing Figure 5, and files `../truth_balance.csv` and `../truth_rskew.csv` for use in the other simulation scripts;
+    
 
 
 ## Replication

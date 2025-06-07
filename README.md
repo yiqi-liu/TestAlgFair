@@ -61,7 +61,7 @@ Before running each `.R` file, make sure the working directory is set to the dir
         * folder `test2n10k-split` contains files `test2n10k-[seed].R` for `[seed]`$\in${0, 1, 2, 3, 4, 5, 6, 7} denoting the random seed used for each of the eight 125 replications that generate `test2n10k-[seed].csv` files in the same directory;
       - folder `test3-FDistance` includes files `test3n[size]k.R` for producing results of the distance-to-F test;
       - file `simulation-DGPplot.R` calls `../results/simulation-DGPplot.Rmd` to generate `../results/simulation-DGPplot.html` that replicates Figure 5, and files `../truth_balance.csv` and `../truth_rskew.csv` for use in the other simulation scripts;
-     * folder `results` collects all output results if the output directory is specified in the corresponding `run.slurm` contained in folders `../code/test1-weak-skew`, `../code/test2-LDA`, and `../code/test3-FDistance`. If running on PC, results will be printed directly in the RStudio console.
+     * folder `results` collects all output results if the output directory is specified in the corresponding `run.slurm` contained in folders `../code/test1-weak-skew`, `../code/test2-LDA`, and `../code/test3-FDistance` run on a SLURM clsuter. If running on PC, results will be printed directly in the RStudio console.
     
 
 

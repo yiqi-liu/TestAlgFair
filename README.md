@@ -46,7 +46,7 @@ Before running each `.R` file, make sure the working directory is set to the dir
         - folder `buildAlg-results/[method]` collects `.png` figures and `.csv` files generated from running `../code/[method]/buildAlg-[method].R`;
         - folder `rep-results` collects the produced `variability.html` file from calling `../code/variability.R`;
     * folder `obermeyer-code` contains code adapted from [Obermeyer et al. (2019)](https://gitlab.com/labsysmed/dissecting-bias):
-        - folder `dissecting-bias-modified` is a copy of [Obermeyer et al. (2019)](https://gitlab.com/labsysmed/dissecting-bias) that contains 2 additional files in the sub-directory `code/model`, `main_modified.py` and `model_modified.py`, modified based on the orginal files `main.py` and `model.py` in the same sub-directory. Any change is documented in the corresponding `.py` file;
+        - folder `dissecting-bias-modified` is a copy of [Obermeyer et al. (2019)](https://gitlab.com/labsysmed/dissecting-bias) that contains 2 additional files in the sub-directory `code/model`, `main_modified.py` and `model_modified.py`, modified based on the orginal files `main.py` and `model.py` in the same sub-directory. Any modification is documented in the corresponding `.py` file;
         - folder `plot0` is the source code of `dissecting-bias-modified/plot0_0.1.tar.gz`;
         - file `Obermeyer-Fig1b.R` is adapted from `dissecting-bias-modified/code/figure1/figure1b.R`;
     * folder `data` contains `.csv` data files generated from running `obermeyer-code/dissecting-bias-modified/code/model/main_modified.py`:

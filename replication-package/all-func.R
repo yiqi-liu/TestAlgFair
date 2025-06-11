@@ -6,12 +6,15 @@ library(grf)
 library(nnet)
 library(torch)
 torch_manual_seed(0)
+
+## START: COMMENT THIS BLOCK OUT IF NO OMP_NUM_THREADS IS EXPLICITLY SET ---
 # for parallelization
 spec_cpu <- as.integer(Sys.getenv("OMP_NUM_THREADS"))
 torch_set_num_threads(spec_cpu)
 torch_set_num_interop_threads(ceiling(log(spec_cpu)))
 library(doMC)
 registerDoMC(cores=spec_cpu)
+## END: COMMENT THIS BLOCK OUT IF NO OMP_NUM_THREADS IS EXPLICITLY SET ---
 
 ## Function that generates data for the simulation
 testDGP <- function(n){

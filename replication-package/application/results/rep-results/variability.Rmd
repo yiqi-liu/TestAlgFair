@@ -1,0 +1,40 @@
+---
+title: "Variability across replications"
+author: "Yiqi Liu"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(skimr)
+library(dplyr)
+library(stringr)
+
+rep_rf <- read.csv("rep-rf.csv")
+rep_lasso <- read.csv("rep-lasso.csv")
+```
+
+### Variability of random forests with 5000 trees
+```{r echo=FALSE, warning=FALSE}
+print(paste0("Number of replications: ", nrow(rep_rf)))
+
+skim(rep_rf) %>%
+  as_tibble() %>%
+  select(-n_missing, -complete_rate, -skim_type) %>%
+  rename_with(~ str_remove(., "^numeric\\.")) %>%   # Remove "numeric." prefix
+  rename_with(~ str_remove(., "^skim_")) %>%        # Remove "skim_" prefix (if present)
+  knitr::kable()
+```
+
+### Variability of multinomial logit lasso
+```{r echo=FALSE, warning=FALSE}
+print(paste0("Number of replications: ", nrow(rep_lasso)))
+
+skim(rep_lasso) %>%
+  as_tibble() %>%
+  select(-n_missing, -complete_rate, -skim_type) %>%
+  rename_with(~ str_remove(., "^numeric\\.")) %>%   # Remove "numeric." prefix
+  rename_with(~ str_remove(., "^skim_")) %>%        # Remove "skim_" prefix (if present)
+  knitr::kable()
+```

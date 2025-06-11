@@ -1,0 +1,6 @@
+population,frac_black,frac_black_se,frac_cost,frac_cost_se,frac_health,frac_health_se
+Observed program enrollment,0.224,0.003,0.041,0.002,0.033,0.001
+"Random, in predicted cost bin",0.177,0.003,0.028,0.001,0.023,0.001
+"Predicted health, in predicted-cost bin",0.308,0.004,0.042,0.002,0.052,0.002
+Highest predicted cost,0.218,0.003,0.077,0.002,0.041,0.002
+Worst predicted health,0.367,0.004,0.06,0.002,0.061,0.002

@@ -1,0 +1,11 @@
+Package: plot0
+Version: 0.1
+Date: 2019-01-23
+Title: Plotting y vs x by z
+Author: Zoey
+Depends: R (>= 3.2.2), data.table, tidyverse, gridExtra
+RoxygenNote: 6.1.0
+Encoding: UTF-8
+LazyData: true
+NeedsCompilation: no
+Packaged: 2019-09-18 19:33:28 UTC; zl160

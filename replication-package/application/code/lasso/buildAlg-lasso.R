@@ -1,0 +1,507 @@
+### Empirical Application: Healthcare Example from Obermeyer et al. (2019)
+## This file constructs four alternative algorithms on the frontier, one corresponding to the BL point that optimizes for the disadvantaged group, one corresponding to the WH point that optimizes for the majority group, one corresponding to the F point obtained using Eq. (20) that optimizes for fairness, and one corresponding to the support point with q=[-1/sqrt(2) -1/sqrt(2)]' that assigns equal weights to the two groups.
+
+set.seed(0)
+source("../../../all-func.R")
+# functions used to replicate Figure 1a of Obermeyer et al. (2019)
+source("../../obermeyer-code/plot0/R/plot0_compute.R")
+# functions used to replicate Figure 1b of Obermeyer et al. (2019)
+source("../../obermeyer-code/Obermeyer-Fig1b.R")
+library(ggplot2)
+library(gridExtra)
+library(grid)
+library(stringr)
+frac_train <- 0.5 # fraction of data used for training
+
+### read data -------
+# X covariates (#): demographic (8), comorbidity (34), cost (13), lab (90), med (4); TOTAL: 149.
+df <- read.csv("../../data/all_Y_x_df.csv")
+X <- df[, 2:150] # 149 covariates
+# percentiles of active chronic conditions
+pct_vals <- round(quantile(df$gagne_sum_t, seq(0.55, 0.99, by = 0.01)), 2)
+# Y_num is defined to be 1 if the number of chronic conditions is greater than num, for num in unique(pct_vals)
+for (num in unique(pct_vals)){
+  assign(paste0("Y_", num),
+         as.numeric(df$gagne_sum_t > num))
+}
+
+# lookup table for percentiles
+pct_df <- data.frame(threshold=55:99,
+                     pct_vals=as.numeric(pct_vals))
+
+# group indicator; black=1 (or the r group in our notation)
+G <- df$dem_race_black
+# number of observations = 48784
+n <- length(G)
+
+### Replicating Figure 1a of Obermeyer et al. (2019): the following code is adapted from the code in figure1.R (https://gitlab.com/labsysmed/dissecting-bias/-/blob/master/code/figure1)
+# data used for plotting Figure 1a
+df_fread <- as.data.table(fread("../../obermeyer-code/dissecting-bias-modified/data/data_new.csv"))
+df_1a <- MyComputePlotDF(df_fread,
+                         col.to.y = 'gagne_sum_t',
+                         col.to.cut = 'risk_score_t',
+                         col.to.groupby = 'race',
+                         nquantiles = 10,
+                         ci.level = 0.95)
+
+f1a <- ggplot(data = df_1a, aes(color = race, linetype = race, group = race)) +
+  theme_bw() +
+  labs(color = 'Race',
+       x = 'Percentile of Algorithm Risk Score',
+       y = 'Number of active chronic conditions') +
+  scale_x_continuous(breaks = seq(0, 100, 10)) +
+  scale_y_continuous(breaks = seq(0, 10, 2)) +
+  theme(legend.key.size = grid::unit(5,"lines")) +
+  theme(legend.key.height= grid::unit(1,"lines")) +
+  # theme(legend.position = 'bottom') +
+  theme(aspect.ratio = 1) +
+  geom_point(aes(x = percentile, y = col_to_mean_by_percentile_by_race), alpha = 0.4, shape = 4) +
+  # geom_point(aes(x = quantile - 5, y = col_to_mean_by_quantile_by_race), size = 2) +
+  geom_smooth(aes(x = percentile, y = col_to_mean_by_percentile_by_race),
+              # method = "glm", formula = y~x,
+              # method.args=list(family = gaussian(link = 'log')),
+              method = "loess",
+              se = FALSE, span = 0.99) +
+  # geom_pointrange(aes(x = quantile - 5, y = col_to_mean_by_quantile_by_race,
+  #                     ymin = col_to_mean_by_quantile_by_race - 1.96 * ci_se,
+  #                     ymax = col_to_mean_by_quantile_by_race + 1.96 * ci_se)) +
+  scale_color_manual(values=c("black"="#764885",
+                              "white"="#ffa600"),
+                     labels = c("black"="All Black",
+                                "white"="All White"),
+                     name = '') +
+  scale_linetype_manual(values = c("black" = "twodash",
+                                   "white" = "solid"),
+                        labels = c("black"="All Black",
+                                   "white"="All White"),
+                        name = '') +
+  geom_vline(aes(xintercept=97), colour="black", linetype="dashed") +
+  geom_text(aes(x=97, label="Defaulted into program", y = 6), colour="black", hjust = 1.2, size = 2) +
+  geom_vline(aes(xintercept=55), colour="dark gray", linetype="dashed") +
+  geom_text(aes(x=55, label="Referred for screen", y = 6), colour="dark gray", hjust = 1.2, size = 2) +
+  coord_cartesian(ylim = c(0, 10))
+
+### Replicating the data used to plot Figure 1b of Obermeyer et al. (2019): the following code is adapted from the code in figure1.R (https://gitlab.com/labsysmed/dissecting-bias/-/blob/master/code/figure1)
+figure1b_df <- exercise(default_in_percentile = seq(55, 99, 1)) %>% as.data.table
+setnames(figure1b_df, c('black_before', 'black_after'), c('before', 'after'))
+figure1b_df[, percentile:= seq(55,99,1)]
+
+table_frac_bl_trt <- data.frame(cbind("capacity_threshold"=55:99,
+                                      "original"=figure1b_df$before,
+                                      "counterfactual"=figure1b_df$after))
+
+### estimate the F point using the entire data ------
+all_q_F45 <- c()
+for (cur in 1:length(unique(pct_vals))) { # for each unique percentile
+  cur_Y <- get(paste0("Y_", unique(pct_vals)[cur]))
+  est_nuisance <- nuisance(X=X, G=G, Y=cur_Y)
+  estimate_F45 <- est_F45(X=X, G=G, Y=cur_Y,
+                          est_nuisance=est_nuisance, optimizer="SGD")
+  # collect the estimated direction corresponding to F45
+  all_q_F45 <- rbind(all_q_F45, estimate_F45$q_F45)
+}
+
+### replicating the 50/50 split procedure for num_rep times to gauge the MC variability across different splits
+num_rep <- 20
+for (iter in 1:num_rep){
+  print(paste0("Current iter=", iter))
+  start <- Sys.time()
+
+  ### train the nuisance parameters used for constructing new algorithms
+  all_train_new_alg <- list()
+  for (cur in 1:length(unique(pct_vals))) { # for each unique percentile
+    cur_Y <- get(paste0("Y_", unique(pct_vals)[cur]))
+    train_new_alg <- alg_on_FAfrontier(X=X, Y=cur_Y, G=G,
+                                       frac_train=frac_train)
+    all_train_new_alg[[cur]] <- train_new_alg
+  }
+
+  ### compare the fraction of minority/disadvantaged group at a given capacity threshold in {55,...,99} (code adapted from that of Obermeyer et al. (2019)) -----
+  threshold <- seq(55, 99, 1) # percentiles considered
+
+  minority_trt_rawlsian <- c()
+  minority_trt_majority <- c()
+  minority_trt_egalitarian <- c()
+  minority_trt_utilitarian <- c()
+
+  # iterating over th in {55,...,99}
+  for (th in threshold){
+    ### build algorithms on the FA frontier ------
+    # first we need to know what percentile value does th correspond to
+    pct_th <- pct_df$pct_vals[pct_df$threshold==th]
+    # then extract the predicted nuisance parameters corresponding to that percentile
+    train_new_alg <- all_train_new_alg[[which(unique(pct_vals)==pct_th)]]
+    # extract the estimated q_F45 corresponding to that percentile
+    q_F45 <- all_q_F45[which(unique(pct_vals)==pct_th), ]
+
+    # subset G to the evaluation sample
+    race_eval <- G[train_new_alg$alg_split_ind==2]
+    # create percentile bins (1 to 100) of predicted risk scores in the evaluation sample (alg_split_ind==2)
+    risk_pctile_eval <- cut(df$risk_score_t[train_new_alg$alg_split_ind==2], unique(quantile(df$risk_score_t[train_new_alg$alg_split_ind==2], probs=0:100/100)), include.lowest=TRUE, labels=FALSE)
+
+    # the first algorithm is the one that puts all the weight to the disadvantaged group with q = [-1 0]'
+    k_rawlsian <- -1*train_new_alg$pred_diff_theta_r/train_new_alg$est_mu_1
+    alg_rawlsian <- as.numeric(k_rawlsian > 0)
+
+    # the second algorithm is the one that puts all the weight to the majority group with q = [0 -1]'
+    k_majority <- -1*train_new_alg$pred_diff_theta_b/(1-train_new_alg$est_mu_1)
+    alg_majority <- as.numeric(k_majority > 0)
+
+    # the third algorithm is the one that aims at achieving the fairest point on the frontier
+    k_egalitarian <- q_F45[1]*train_new_alg$pred_diff_theta_r/train_new_alg$est_mu_1 +
+      q_F45[2]*train_new_alg$pred_diff_theta_b/(1-train_new_alg$est_mu_1)
+    alg_egalitarian <- as.numeric(k_egalitarian > 0)
+
+    # the fourth algorithm assigns equal weights to the two groups with q = [-1/sqrt(2), -1/sqrt(2)]'
+    k_utilitarian <- (-1/sqrt(2))*train_new_alg$pred_diff_theta_r/train_new_alg$est_mu_1 +
+      (-1/sqrt(2))*train_new_alg$pred_diff_theta_b/(1-train_new_alg$est_mu_1)
+    alg_utilitarian <- as.numeric(k_utilitarian > 0)
+
+    # among the evaluation population treated under the new algorithm with the th-percentile capacity constraint, what is the fraction of black treated
+    capacity_rawlsian <- k_rawlsian >= quantile(k_rawlsian, th*0.01)
+    minority_trt_rawlsian <- append(minority_trt_rawlsian,
+                                    sum(alg_rawlsian[which(capacity_rawlsian & race_eval==1)])/sum(alg_rawlsian[which(capacity_rawlsian)])
+    )
+
+    capacity_majority <- k_majority >= quantile(k_majority, th*0.01)
+    minority_trt_majority <- append(minority_trt_majority,
+                                    sum(alg_majority[which(capacity_majority & race_eval==1)])/sum(alg_majority[which(capacity_majority)])
+    )
+
+    capacity_egalitarian <- k_egalitarian >= quantile(k_egalitarian, th*0.01)
+    minority_trt_egalitarian <- append(minority_trt_egalitarian,
+                                       sum(alg_egalitarian[which(capacity_egalitarian & race_eval==1)])/sum(alg_egalitarian[which(capacity_egalitarian)])
+    )
+
+    capacity_utilitarian <- k_utilitarian >= quantile(k_utilitarian, th*0.01)
+    minority_trt_utilitarian <- append(minority_trt_utilitarian,
+                                       sum(alg_utilitarian[which(capacity_utilitarian & race_eval==1)])/sum(alg_utilitarian[which(capacity_utilitarian)])
+    )
+  }
+
+  ## data prep for plotting Figure 1a (capacity fixed at the 97-th percentile, i.e., treating at most 3% of the population) ------
+  # first we need to know what percentile value does 97 correspond to
+  pct_th <- pct_df$pct_vals[pct_df$threshold==97]
+  # then extract the predicted nuisance parameters corresponding to that percentile
+  train_new_alg <- all_train_new_alg[[which(unique(pct_vals)==pct_th)]]
+  # extract the estimated q_F45 corresponding to that percentile
+  q_F45 <- all_q_F45[which(unique(pct_vals)==pct_th), ]
+
+  # the first algorithm is the one that puts all the weight to the disadvantaged group with q = [-1 0]'
+  k_rawlsian <- -1*train_new_alg$pred_diff_theta_r/train_new_alg$est_mu_1
+  alg_rawlsian <- as.numeric(k_rawlsian > 0)
+
+  # the second algorithm is the one that puts all the weight to the majority group with q = [0 -1]'
+  k_majority <- -1*train_new_alg$pred_diff_theta_b/(1-train_new_alg$est_mu_1)
+  alg_majority <- as.numeric(k_majority > 0)
+
+  # the third algorithm is the one that aims at achieving the fairest point on the frontier
+  k_egalitarian <- q_F45[1]*train_new_alg$pred_diff_theta_r/train_new_alg$est_mu_1 +
+    q_F45[2]*train_new_alg$pred_diff_theta_b/(1-train_new_alg$est_mu_1)
+  alg_egalitarian <- as.numeric(k_egalitarian > 0)
+
+  # the fourth algorithm assigns equal "weight" to the two groups with q = [-1/sqrt(2), -1/sqrt(2)]'
+  k_utilitarian <- (-1/sqrt(2))*train_new_alg$pred_diff_theta_r/train_new_alg$est_mu_1 +
+    (-1/sqrt(2))*train_new_alg$pred_diff_theta_b/(1-train_new_alg$est_mu_1)
+  alg_utilitarian <- as.numeric(k_utilitarian > 0)
+
+  # subset data to the evaluation set
+  df_eval <- df_fread[train_new_alg$alg_split_ind==2, ]
+
+  # compute percentile bins for those treated by the rawlsian algorithm
+  capacity_rawlsian <- k_rawlsian >= quantile(k_rawlsian, 0.97)
+  rawlsian_1a_trt <- MyComputePlotDF(df_eval[alg_rawlsian==1 & capacity_rawlsian, ],
+                                     col.to.y = 'gagne_sum_t',
+                                     col.to.cut = 'risk_score_t',
+                                     col.to.groupby = 'race',
+                                     nquantiles = 10,
+                                     ci.level = 0.95)
+  # compute percentile bins for those NOT treated by the rawlsian algorithm
+  rawlsian_1a_ctrl <- MyComputePlotDF(df_eval[alg_rawlsian==0 | !capacity_rawlsian, ],
+                                      col.to.y = 'gagne_sum_t',
+                                      col.to.cut = 'risk_score_t',
+                                      col.to.groupby = 'race',
+                                      nquantiles = 10,
+                                      ci.level = 0.95)
+
+  # compute percentile bins for those treated by the majority algorithm
+  capacity_majority <- k_majority >= quantile(k_majority, 0.97)
+  majority_1a_trt <- MyComputePlotDF(df_eval[alg_majority==1 & capacity_majority, ],
+                                     col.to.y = 'gagne_sum_t',
+                                     col.to.cut = 'risk_score_t',
+                                     col.to.groupby = 'race',
+                                     nquantiles = 10,
+                                     ci.level = 0.95)
+  # compute percentile bins for those NOT treated by the majority algorithm
+  majority_1a_ctrl <- MyComputePlotDF(df_eval[alg_majority==0 | !capacity_majority, ],
+                                      col.to.y = 'gagne_sum_t',
+                                      col.to.cut = 'risk_score_t',
+                                      col.to.groupby = 'race',
+                                      nquantiles = 10,
+                                      ci.level = 0.95)
+
+  # compute percentile bins for those treated by the egalitarian algorithm
+  capacity_egalitarian <- k_egalitarian >= quantile(k_egalitarian, 0.97)
+  egalitarian_1a_trt <- MyComputePlotDF(df_eval[alg_egalitarian==1 & capacity_egalitarian, ],
+                                        col.to.y = 'gagne_sum_t',
+                                        col.to.cut = 'risk_score_t',
+                                        col.to.groupby = 'race',
+                                        nquantiles = 10,
+                                        ci.level = 0.95)
+  # compute percentile bins for those NOT treated by the egalitarian algorithm
+  egalitarian_1a_ctrl <- MyComputePlotDF(df_eval[alg_egalitarian==0 | !capacity_egalitarian, ],
+                                         col.to.y = 'gagne_sum_t',
+                                         col.to.cut = 'risk_score_t',
+                                         col.to.groupby = 'race',
+                                         nquantiles = 10,
+                                         ci.level = 0.95)
+
+  # compute percentile bins for those treated by the utilitarian algorithm
+  capacity_utilitarian <- k_utilitarian >= quantile(k_utilitarian, 0.97)
+  utilitarian_1a_trt <- MyComputePlotDF(df_eval[alg_utilitarian==1 & capacity_utilitarian, ],
+                                        col.to.y = 'gagne_sum_t',
+                                        col.to.cut = 'risk_score_t',
+                                        col.to.groupby = 'race',
+                                        nquantiles = 10,
+                                        ci.level = 0.95)
+  # compute percentile bins for those NOT treated by the utilitarian algorithm
+  utilitarian_1a_ctrl <- MyComputePlotDF(df_eval[alg_utilitarian==0 | !capacity_utilitarian, ],
+                                         col.to.y = 'gagne_sum_t',
+                                         col.to.cut = 'risk_score_t',
+                                         col.to.groupby = 'race',
+                                         nquantiles = 10,
+                                         ci.level = 0.95)
+
+  ### Cleaning data for plotting ---------
+  f1a_trt <-  data.frame(rbind(
+    rawlsian_1a_trt[, c("percentile",
+                        "col_to_mean_by_percentile_by_race",
+                        "race")],
+    majority_1a_trt[, c("percentile",
+                        "col_to_mean_by_percentile_by_race",
+                        "race")],
+    egalitarian_1a_trt[, c("percentile",
+                           "col_to_mean_by_percentile_by_race",
+                           "race")],
+    utilitarian_1a_trt[, c("percentile",
+                           "col_to_mean_by_percentile_by_race",
+                           "race")]
+      )
+    )
+
+  f1a_trt$alg <- c(rep("rawlsian", nrow(rawlsian_1a_trt)),
+                   rep("majority", nrow(majority_1a_trt)),
+                   rep("egalitarian", nrow(egalitarian_1a_trt)),
+                   rep("utilitarian", nrow(utilitarian_1a_trt)))
+  f1a_trt$trt <- "trt"
+  f1a_trt$iter <- iter
+
+  f1a_ctrl <-  data.frame(rbind(
+    rawlsian_1a_ctrl[, c("percentile",
+                         "col_to_mean_by_percentile_by_race",
+                         "race")],
+    majority_1a_ctrl[, c("percentile",
+                         "col_to_mean_by_percentile_by_race",
+                         "race")],
+    egalitarian_1a_ctrl[, c("percentile",
+                            "col_to_mean_by_percentile_by_race",
+                            "race")],
+    utilitarian_1a_ctrl[, c("percentile",
+                            "col_to_mean_by_percentile_by_race",
+                            "race")]
+    )
+  )
+
+  f1a_ctrl$alg <- c(rep("rawlsian", nrow(rawlsian_1a_ctrl)),
+                    rep("majority", nrow(majority_1a_ctrl)),
+                    rep("egalitarian", nrow(egalitarian_1a_ctrl)),
+                    rep("utilitarian", nrow(utilitarian_1a_ctrl)))
+  f1a_ctrl$trt <- "ctrl"
+  f1a_ctrl$iter <- iter
+
+  capacity_rawlsian <- as.numeric(capacity_rawlsian)
+  capacity_majority <- as.numeric(capacity_majority)
+  capacity_egalitarian <- as.numeric(capacity_egalitarian)
+  capacity_utilitarian <- as.numeric(capacity_utilitarian)
+  result <- data.frame(cbind("race"=df_eval$race,
+                             "iter"=rep(iter, nrow(df_eval)),
+                             alg_rawlsian, capacity_rawlsian,
+                             alg_majority, capacity_majority,
+                             alg_egalitarian, capacity_egalitarian,
+                             alg_utilitarian, capacity_utilitarian))
+
+  f1b_result <- data.frame(cbind("iter"=rep(iter, length(threshold)),
+                                 threshold,
+                                 minority_trt_rawlsian,
+                                 minority_trt_majority,
+                                 minority_trt_egalitarian,
+                                 minority_trt_utilitarian))
+
+  if (iter==1){
+    alt_alg_result <- result
+    alt_alg_f1a <- rbind(f1a_trt, f1a_ctrl)
+    alt_alg_f1b <- f1b_result
+  } else{
+    alt_alg_result <- rbind(alt_alg_result, result)
+    alt_alg_f1a <- rbind(alt_alg_f1a, f1a_trt, f1a_ctrl)
+    alt_alg_f1b <- rbind(alt_alg_f1b, f1b_result)
+  }
+
+  end <- Sys.time()
+  print(end-start)
+}
+
+write.csv(alt_alg_result, paste0('../../results/buildAlg-results/lasso/alt_alg_result.csv'), row.names = F)
+write.csv(alt_alg_f1a, paste0('../../results/buildAlg-results/lasso/alt_alg_f1a.csv'), row.names = F)
+write.csv(alt_alg_f1b, paste0('../../results/buildAlg-results/lasso/alt_alg_f1b.csv'), row.names = F)
+
+## PLOT: Figure 1a ---------
+# average percentile across replications
+f1a_avg_pct <- alt_alg_f1a %>%
+  group_by(alg, trt, race, percentile) %>%
+  summarize(mean_y = mean(col_to_mean_by_percentile_by_race),
+            .groups = "drop")
+
+for (alg_name in c("rawlsian", "majority", "egalitarian", "utilitarian")) {
+  df_avg_pct_trt <- f1a_avg_pct %>% filter(alg==alg_name & trt=="trt")
+  df_avg_pct_trt$race <- ifelse(df_avg_pct_trt$race=="black",
+                                "trt BL", "trt WH")
+
+  df_avg_pct_ctrl <- f1a_avg_pct %>% filter(alg==alg_name & trt=="ctrl")
+  df_avg_pct_ctrl$race <- ifelse(df_avg_pct_ctrl$race=="black",
+                                 "ctrl BL", "ctrl WH")
+
+  ## for the treated population
+  p <- ggplot(data=df_avg_pct_trt, aes(color=race, linetype=race, group=race)) +
+    geom_point(aes(x=percentile, y=mean_y), shape=4) +
+    geom_smooth(aes(x = percentile, y = mean_y),
+                method = "loess",
+                se = FALSE, span = 0.99) +
+    scale_x_continuous(breaks = seq(0, 100, 10)) +
+    scale_y_continuous(breaks = seq(0, 10, 2)) +
+    coord_cartesian(ylim = c(0, 10)) +
+    theme_bw() +
+    scale_color_manual("", values=c("trt BL"="#764885",
+                                    "trt WH"="#ffa600",
+                                    "ctrl BL"="plum",
+                                    "ctrl WH"="salmon"),
+                       labels = c("trt BL"="Treated Black",
+                                  "trt WH"="Treated White",
+                                  "ctrl BL"="Control Black",
+                                  "ctrl WH"="Control White")) +
+    scale_linetype_manual("", values = c("trt BL" = "twodash",
+                                         "trt WH" = "solid",
+                                         "ctrl BL" = "twodash",
+                                         "ctrl WH" = "solid"),
+                          labels = c("trt BL"="Treated Black",
+                                     "trt WH"="Treated White",
+                                     "ctrl BL"="Control Black",
+                                     "ctrl WH"="Control White")) +
+    geom_vline(aes(xintercept=97), colour="black", linetype="dashed") +
+    geom_text(aes(x=97, label="Defaulted into program", y = 6), colour="black", hjust = 1.2, size = 2) +
+    geom_vline(aes(xintercept=55), colour="dark gray", linetype="dashed") +
+    geom_text(aes(x=55, label="Referred for screen", y = 6), colour="dark gray", hjust = 1.2, size = 2) +
+    coord_cartesian(ylim = c(0, 10)) +
+    theme(aspect.ratio = 1) +
+    theme(legend.key.size = grid::unit(5,"lines")) +
+    theme(legend.key.height= grid::unit(1,"lines")) +
+    labs(color = 'Race',
+         x = 'Percentile of Algorithm Risk Score',
+         y = 'Number of active chronic conditions') +
+
+    ## for the control population
+    geom_point(data=df_avg_pct_ctrl, aes(x=percentile, y=mean_y, color=race, group=race), shape=4, alpha=0.5) +
+    geom_smooth(data=df_avg_pct_ctrl,
+                aes(x=percentile, y=mean_y,
+                    color=race, linetype=race, group=race),
+                method = "loess",
+                se = FALSE, span = 0.99)
+
+  assign(paste0("f1a_", alg_name), p)
+}
+
+# store the legend
+legend <- ggplotGrob(f1a_rawlsian)$grobs[[which(sapply(ggplotGrob(f1a_rawlsian)$grobs, function(x) x$name) == "guide-box")]]
+
+top_f1a <- arrangeGrob(f1a + theme(legend.position = "none"),
+                       ncol=1)
+
+plot_f1a <- arrangeGrob(
+  arrangeGrob(
+    f1a_rawlsian + theme(legend.position = "none") +
+      geom_text(aes(x=0, label=paste0("Algorithm: Rawlsian"), y=10),
+                colour="black", hjust = 0, size = 5),
+    f1a_majority + theme(legend.position = "none") +
+      geom_text(aes(x=0, label=paste0("Algorithm: Majority"), y=10),
+                colour="black", hjust = 0, size = 5), ncol = 2
+  ),
+  arrangeGrob(
+    f1a_egalitarian + theme(legend.position = "none") +
+      geom_text(aes(x=0, label=paste0("Algorithm: Egalitarian"), y=10),
+                colour="black", hjust = 0, size = 5),
+    f1a_utilitarian + theme(legend.position = "none") +
+      geom_text(aes(x=0, label=paste0("Algorithm: Utilitarian"), y=10),
+                colour="black", hjust = 0, size = 5), ncol = 2
+  ),
+  ncol = 1, heights = c(1, 1)
+)
+
+
+ggsave(paste0('../../results/buildAlg-results/lasso/alt-alg-f1a.png'),
+       grid.arrange(arrangeGrob(top_f1a, plot_f1a,
+                                ncol = 1, heights = c(1, 2)),
+                    legend,
+                    ncol = 1,
+                    heights = c(10, 1)),
+       width = 12, height = 18)
+
+
+## TABLE: fraction of black treated -----
+alt_long <- pivot_longer(
+  alt_alg_f1b,
+  cols = -c(iter, threshold),
+  names_to = "type",
+  values_to = "value"
+)
+
+mean_across_seeds <- alt_long %>%
+  group_by(threshold, type) %>%
+  summarise(value=mean(value), .groups = "drop")
+
+table_frac_bl_trt$rawlsian <- mean_across_seeds$value[mean_across_seeds$type=="minority_trt_rawlsian"]
+table_frac_bl_trt$majority <- mean_across_seeds$value[mean_across_seeds$type=="minority_trt_majority"]
+table_frac_bl_trt$egalitarian <- mean_across_seeds$value[mean_across_seeds$type=="minority_trt_egalitarian"]
+table_frac_bl_trt$utilitarian <- mean_across_seeds$value[mean_across_seeds$type=="minority_trt_utilitarian"]
+
+write.csv(table_frac_bl_trt[table_frac_bl_trt$capacity_threshold<=98, ], paste0('../../results/buildAlg-results/lasso/table_frac_bl_trt.csv'), row.names = F)
+
+alt_alg_result <- alt_alg_result %>%
+  mutate(across(-race, ~ as.numeric(.)))
+
+cat("Total number of replications: ", num_rep, "\n",
+    "Average size of the evaluation sample: ", nrow(alt_alg_result)/num_rep, "\n",
+    "Average size of blacks in the evaluation sample: ", nrow(alt_alg_result[alt_alg_result$race=="black", ])/num_rep, "\n",
+    " ------------ WITHOUT CAPACITY CONSTRAINT ------------\n",
+    "Average number of treated in the evaluation sample:\n",
+    "   Rawlsian: ", sum(alt_alg_result$alg_rawlsian)/num_rep, "\n",
+    "   Majority: ", sum(alt_alg_result$alg_majority)/num_rep, "\n",
+    "   Egalitarian: ", sum(alt_alg_result$alg_egalitarian)/num_rep, "\n",
+    "   Utilitarian: ", sum(alt_alg_result$alg_utilitarian)/num_rep, "\n",
+    "Average number of treated blacks in the evaluation sample:\n",
+    "   Rawlsian: ", sum(alt_alg_result$alg_rawlsian[alt_alg_result$race=="black"])/num_rep, "\n",
+    "   Majority: ", sum(alt_alg_result$alg_majority[alt_alg_result$race=="black"])/num_rep, "\n",
+    "   Egalitarian: ", sum(alt_alg_result$alg_egalitarian[alt_alg_result$race=="black"])/num_rep, "\n",
+    "   Utilitarian: ", sum(alt_alg_result$alg_utilitarian[alt_alg_result$race=="black"])/num_rep, "\n",
+    " ------------ WITH 3% CAPACITY CONSTRAINT ------------\n",
+    "Average number of treated in the evaluation sample:\n",
+    "   Rawlsian: ", sum(alt_alg_result$alg_rawlsian[alt_alg_result$capacity_rawlsian==1])/num_rep, "\n",
+    "   Majority: ", sum(alt_alg_result$alg_majority[alt_alg_result$capacity_majority==1])/num_rep, "\n",
+    "   Egalitarian: ", sum(alt_alg_result$alg_egalitarian[alt_alg_result$capacity_egalitarian==1])/num_rep, "\n",
+    "   Utilitarian: ", sum(alt_alg_result$alg_utilitarian[alt_alg_result$capacity_utilitarian==1])/num_rep, "\n",
+    "Average number of treated blacks in the evaluation sample:\n",
+    "   Rawlsian: ", sum(alt_alg_result$alg_rawlsian[alt_alg_result$capacity_rawlsian==1 & alt_alg_result$race=="black"])/num_rep, "\n",
+    "   Majority: ", sum(alt_alg_result$alg_majority[alt_alg_result$capacity_majority==1 & alt_alg_result$race=="black"])/num_rep, "\n",
+    "   Egalitarian: ", sum(alt_alg_result$alg_egalitarian[alt_alg_result$capacity_egalitarian==1 & alt_alg_result$race=="black"])/num_rep, "\n",
+    "   Utilitarian: ", sum(alt_alg_result$alg_utilitarian[alt_alg_result$capacity_utilitarian==1 & alt_alg_result$race=="black"])/num_rep, "\n"
+)
+

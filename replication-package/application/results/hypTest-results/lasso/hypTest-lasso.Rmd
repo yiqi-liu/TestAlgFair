@@ -1,0 +1,627 @@
+---
+title: 'Empirical Application: Healthcare Example from Obermeyer et al. (2019)'
+author: "Yiqi Liu & Francesca Molinari"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+set.seed(0)
+source("../../../../all-func.R")
+library(latex2exp)
+library(ggplot2)
+library(gridExtra)
+library(grid)
+library(concaveman)
+library(rcdd)
+```
+
+### Data
+
+```{r}
+# X covariates (#): demographic (8), comorbidity (34), cost (13), lab (90), med (4); TOTAL: 149.
+df <- read.csv("../../../data/all_Y_x_df.csv")
+X <- df[, 2:150] # 149 covariates
+# Y is defined to be 1{greater than 97-percentile active chronic conditions (6)}, as in LLMO
+Y <- as.numeric(df$gagne_sum_t > quantile(df$gagne_sum_t, 0.97))
+# group indicator; black=1 (or the r group in our notation)
+G <- df$dem_race_black
+# number of observations = 48784
+n <- length(Y)
+```
+
+### Estimating the Feasible Set
+
+```{r}
+num_q <- 1000 # number of directions
+
+# grid of (q, v) used to estimate the support sets
+grid_q_sf <- t(as.matrix(sapply(seq(0, 2*pi, length.out=num_q), function(rad){c(cos(rad), sin(rad))})))
+grid_q <- rbind(grid_q_sf, grid_q_sf)
+grid_v <- data.matrix(cbind(c(rep(1, each=num_q), rep(0, each=num_q)), c(rep(0, each=num_q), rep(1, each=num_q))))
+
+# directions (q, v) that yield coordinates of R (BL) and B (WH)
+RB_q <- matrix(c(-1, 0, -1, 0, 0, -1, 0, -1), byrow=TRUE, ncol=2)
+RB_v <- matrix(c(1, 0, 0, 1, 1, 0, 0, 1), byrow=TRUE, ncol=2)
+
+q <- rbind(grid_q, RB_q)
+v <- rbind(grid_v, RB_v)
+
+# estimate the nuisance parameters using multinomial logit lasso
+est_nuisance <- nuisance(X=X, G=G, Y=Y)
+
+# estimate the support sets
+sf <- support_function(X=X, G=G, Y=Y,
+                       q=q, v=v, est_nuisance=est_nuisance)
+
+# estimate the F point
+estimate_F45 <- est_F45(Y=Y, X=X, G=G, est_nuisance=est_nuisance, optimizer="SGD")
+F45 <- estimate_F45$F45
+q_F45 <- estimate_F45$q_F45
+```
+
+### Constructing Confidence Set for the Fairness-Accuracy Frontier
+
+```{r}
+kappa_n <- sqrt(log(n))/sqrt(n) # tolerance
+# create a grid of candidate values of e to be tested
+cand_e <- create_candidate_e_frontier(Y=Y, X=X, G=G,
+                                      est_nuisance=est_nuisance,
+                                      num_grid=20000,
+                                      buffer=2*kappa_n)
+
+# further refine the grid
+cand_e <- cand_e[cand_e[,1] < 0.5 & cand_e[,1] >= 0 & cand_e[,2] < 0.5 & cand_e[,2] >= 0, ]
+
+# final grid consists of 5000 candidate values to be tested 
+cand_e <- cand_e[sample(1:nrow(cand_e), size=5000, replace = FALSE), ]
+
+# compute the test statistics, critical values, and rejection decision
+FAfrontier <- CS_FAfrontier(Y=Y, X=X, G=G,
+                            e1=cand_e[,1],
+                            e2=cand_e[,2],
+                            est_nuisance=est_nuisance,
+                            optimizer="grid",
+                            kink=TRUE,
+                            num_bstp_rep=1000)
+
+# the final confidence set we plot is the concave hull of all accepted points
+plot_FAfrontier <- concaveman(cand_e[FAfrontier$rej==0,], concavity=2.3)
+```
+
+Note: The top-left panel displays the estimated feasible set, obtained as the intersection of halfspaces defined by the estimated support function evaluated at 1,000 directions. The top-right panel overlays 100 supporting hyperplanes---constructed from a subset of 100 estimated support functions---on top of the top-left panel. The bottom-left panel zooms into the portion of the estimated feasible set that contains the $BL$, $WH$, and $F$ points, with points accepted by the confidence set for the Fairness-Accuracy frontier overlaid as a shaded purple region. The bottom-right panel further zooms into the $BL$ and $WH$ points.
+
+```{r echo=FALSE, fig.width=8, fig.height=6, warning=FALSE}
+# extract the estimated support points
+ss <- data.frame(e_r = sf$est_sf[1:num_q],
+                 e_b = sf$est_sf[(num_q+1):(2*num_q)])
+
+# halfspaces defined by q1*e_r + q2*e_b <= est_sf
+halfspaces <- data.frame(
+  q1 = grid_q_sf[,1],
+  q2 = grid_q_sf[,2],
+  sf_q = grid_q_sf[,1]*ss[,1]+grid_q_sf[,2]*ss[,2]
+)
+
+hrep <- makeH(a1=grid_q_sf, b1=halfspaces$sf_q)
+vertices <- scdd(hrep)$output[, 3:4]
+
+# compute the vertices of the feasible region
+vertices <- data.frame(e_r=vertices[,1], e_b=vertices[,2])
+
+# hyperplanes defined by q1*e_r + q2*e_b = est_sf
+hyperplanes <- halfspaces %>%
+  mutate(slope = ifelse(q2 != 0, -q1 / q2, NA),
+         intercept = ifelse(q2 != 0, sf_q / q2, NA))
+
+# these are the estimated R (BL), B (WH) and F points
+plot_RBF <- data.frame(e_r = c(sf$est_sf[(2*num_q)+1],
+                               sf$est_sf[(2*num_q)+3],
+                               F45),
+                       e_b = c(sf$est_sf[(2*num_q)+2],
+                               sf$est_sf[(2*num_q)+4],
+                               F45),
+                       type = c("est BL", "est WH", "est F"))
+
+# take the convex hull of estimated support points
+conv_hull <- slice(vertices, chull(e_r, e_b))
+
+# intersection between the convex hull and the 45-degree line
+inters <- find_intersections(conv_hull)
+
+# these are the corresponding R (BL), B (WH), and F points of the intersection of estimated supporting halfspaces
+plot_RBFvert <- data.frame(e_r = c(vertices[which.min(vertices$e_r), 1],
+                                   vertices[which.min(vertices$e_b), 1],
+                                   inters[which.min(inters$e_r), 1]),
+                           e_b = c(vertices[which.min(vertices$e_r), 2],
+                                   vertices[which.min(vertices$e_b), 2],
+                                   inters[which.min(inters$e_b), 2]),
+                           type = c("est BL", "est WH", "est F"))
+
+# plot the estimated feasible set
+p <- ggplot(ss, aes(x=e_r, y=e_b)) +
+  geom_polygon(data=conv_hull, aes(x=e_r, y=e_b),
+               colour='pink', fill='lavenderblush', alpha = 0.5) +
+  geom_abline(intercept=0, slope=1, linetype="dashed", color="lightgray", linewidth=.25) +
+  theme_classic() +
+  geom_point(data = plot_RBFvert,
+             aes(x = e_r, y = e_b, color=type, shape=type), size=3.5) +
+  scale_shape_manual("",values=c("est BL"=20, "est WH"=20, "est F"=20)) +
+  scale_color_manual("", values=c("est BL"="firebrick", "est WH"="steelblue1", "est F"="black")) +
+  labs(x=TeX("$e_{bl}$"),
+       y=TeX("$e_{wh}$"))
+
+# store the legend
+legend <- ggplotGrob(p)$grobs[[which(sapply(ggplotGrob(p)$grobs, function(x) x$name) == "guide-box")]]
+
+# add estimated supporting hyperplanes on top
+p_sf <- p + geom_abline(data=hyperplanes[round(seq(1, num_q, length.out = 100)),], aes(slope=slope, intercept=intercept), linewidth=0.3, color="gray") + 
+  geom_point(data = plot_RBFvert,
+             aes(x = e_r, y = e_b, color=type, shape=type), size=3.5) + theme(legend.position = "none")
+
+# zoomed-in version of the estimated feasible set, with CS for the frontier
+p_zoom <- ggplot(ss, aes(x=e_r, y=e_b)) +
+  geom_polygon(data=data.frame(e_r=plot_FAfrontier[,1], e_b=plot_FAfrontier[,2]), aes(x = e_r, y = e_b), color="black", fill="lightsteelblue3", linewidth=0.2, alpha=0.2) +
+  geom_polygon(data=conv_hull, aes(x=e_r, y=e_b),
+               colour='pink', fill='lavenderblush', alpha = 0.5) +
+  geom_abline(intercept=0, slope=1, linetype="dashed", color="lightgray", linewidth=.25) +
+  theme_classic() +
+  geom_point(data = plot_RBFvert,
+             aes(x = e_r, y = e_b, color=type, shape=type), size=3.5) +
+  scale_shape_manual("",values=c("est BL"=20, "est WH"=20, "est F"=20)) +
+  scale_color_manual("", values=c("est BL"="firebrick", "est WH"="steelblue1", "est F"="black")) +
+  labs(x=TeX("$e_{bl}$"),
+       y=TeX("$e_{wh}$")) +
+  coord_cartesian(xlim = c(min(plot_RBFvert[,1])-abs(diff(range(plot_RBFvert[,1]))), max(plot_RBFvert[,1])+abs(diff(range(plot_RBFvert[,1])))), ylim = c(min(plot_RBFvert[,2])-abs(diff(range(plot_RBFvert[,2]))), max(plot_RBFvert[,2])+abs(diff(range(plot_RBFvert[,2])))))
+
+# further zoomed-in version
+p_zoom_more <- p + coord_cartesian(xlim = c(min(plot_RBFvert[1:2,1])-abs(diff(range(plot_RBFvert[1:2,1]))), max(plot_RBFvert[1:2,1])+abs(diff(range(plot_RBFvert[1:2,1])))), ylim = c(min(plot_RBFvert[1:2,2])-abs(diff(range(plot_RBFvert[1:2,2]))), max(plot_RBFvert[1:2,2])+abs(diff(range(plot_RBFvert[1:2,2]))))) + theme(legend.position = "none")
+
+grid.arrange(
+  arrangeGrob(p+theme(legend.position="none"), p_sf, p_zoom+theme(legend.position="none"), p_zoom_more, ncol = 2),
+  legend,
+  ncol = 2,
+  widths = c(3, 0.5),
+  top = textGrob(TeX("Estimated feasible set ($\\theta$ estimated by multinomial logit lasso)"), 
+                 gp=gpar(fontsize=20,font=3))
+)
+
+print("Estimated support sets:")
+print(paste0("Estimated BL (black-group optimum)=(", sprintf("%.10f", plot_RBF[1,1]), ", ", sprintf("%.10f", plot_RBF[1,2]), ")"))
+print(paste0("Estimated WH (white-group optimum)=(", sprintf("%.10f", plot_RBF[2,1]), ", ", sprintf("%.10f", plot_RBF[2,2]), ")"))
+print(paste0("Estimated F (fairest point)=(", sprintf("%.10f", plot_RBF[3,1]), ", ", sprintf("%.10f", plot_RBF[3,2]), ")"))
+print("Estimated support sets (of the intersection of supporting halfspaces):")
+print(paste0("Estimated BL (black-group optimum)=(", sprintf("%.10f", plot_RBFvert[1,1]), ", ", sprintf("%.10f", plot_RBFvert[1,2]), ")"))
+print(paste0("Estimated WH (white-group optimum)=(", sprintf("%.10f", plot_RBFvert[2,1]), ", ", sprintf("%.10f", plot_RBFvert[2,2]), ")"))
+print(paste0("Estimated F (fairest point)=(", sprintf("%.10f", plot_RBFvert[3,1]), ", ", sprintf("%.10f", plot_RBFvert[3,2]), ")"))
+```
+
+### Testing $\mathsf{H}_0$: $\mathcal{E}$ is Weak Group-Skewed
+
+```{r}
+### RECALL R=BL, B=WH
+## first, construct confidence sets for (R, B)
+# define parameter space of (R, B) by using the estimated R and B
+num_grid <- 100 # (num_grid)^2 is number of parameter values being tested
+# candidate values for R
+grid_R <- data.matrix(expand.grid(rnorm(num_grid,
+                                        mean=plot_RBFvert[1,1],
+                                        sd=kappa_n),
+                                  rnorm(num_grid,
+                                        mean=plot_RBFvert[1,2],
+                                        sd=kappa_n)))
+
+grid_R <- rbind(c(plot_RBFvert[1,1], plot_RBFvert[1,2]),
+                grid_R)
+
+# candidate values for B
+grid_B <- data.matrix(expand.grid(rnorm(num_grid,
+                                        mean=plot_RBFvert[2,1],
+                                        sd=kappa_n),
+                                  rnorm(num_grid,
+                                        mean=plot_RBFvert[2,2],
+                                        sd=kappa_n)))
+
+grid_B <- rbind(c(plot_RBFvert[2,1], plot_RBFvert[2,2]),
+                grid_B)
+
+# test under the presence of kinks
+test1 <- CS_RB(X=X, G=G, Y=Y,
+               est_nuisance=est_nuisance,
+               R1=grid_R[,1],
+               R2=grid_R[,2],
+               B1=grid_B[,1],
+               B2=grid_B[,2],
+               optimizer="grid", grid_size=1000,
+               kink=TRUE, num_bstp_rep=1000)
+
+# set of indices of candidate (R,B) not rejected
+CS_index <- which(test1$rej==0)
+# result of the test, as per Step 2, Procedure 1 of Liu & Molinari (2024)
+test1_rej <- max((grid_R[CS_index,1]-grid_R[CS_index,2])*(grid_B[CS_index,1]-grid_B[CS_index,2])) < 0
+```
+
+```{r echo=FALSE, fig.width=4, fig.height=3, warning=FALSE}
+if (test1_rej){
+  print("H_0: WEAK GROUP SKEW is rejected")
+
+} else{
+  print("H_0: WEAK GROUP SKEW fails to be rejected")
+}
+
+R1=grid_R[,1]
+R2=grid_R[,2]
+B1=grid_B[,1]
+B2=grid_B[,2]
+
+ind <- which(test1$rej==0)
+
+ggplot(ss, aes(x=e_r, y=e_b)) +
+  coord_cartesian(xlim = c(min(R1, B1), max(R1, B1)), ylim = c(min(R2, B2), max(R2, B2))) +
+  theme_classic() +
+  geom_point(data=data.frame(e_r=R1, e_b=R2), aes(x = e_r, y = e_b), color='plum', alpha=0.08)+
+  geom_point(data=data.frame(e_r=B1, e_b=B2), aes(x = e_r, y = e_b), color='lightblue3', alpha=0.08) +
+    geom_point(data=data.frame(e_r=B1[ind], e_b=B2[ind]), aes(x = e_r, y = e_b), color='red', shape=18, alpha=0.6) +
+  geom_point(data=data.frame(e_r=R1[ind], e_b=R2[ind]), aes(x = e_r, y = e_b), color='royalblue3', shape=18, alpha=0.8)+
+  geom_polygon(data=conv_hull, aes(x=e_r, y=e_b),
+               colour='pink', fill='lavenderblush', alpha = 0.5) +
+  geom_point(data = plot_RBFvert,
+             aes(x = e_r, y = e_b, color=type, shape=type), size=3) +
+  scale_shape_manual("",values=c("est BL"=20, "est WH"=20)) +
+  scale_color_manual("", values=c("est BL"="firebrick", "est WH"="steelblue1")) +
+  geom_abline(intercept=0, slope=1, linetype="dashed", color="black", linewidth=.25, alpha=0.7) +
+  labs(x=TeX("$e_{bl}$"),
+       y=TeX("$e_{wh}$"),
+       title=TeX("Test $H_0$: Weak Group Skew"))
+```
+
+Note: Plum-colored (resp., grayish-blue-colored) circles correspond to candidate values for $BL$ ($WH$), and red (blue) diamonds correspond to accepted candidate values for $BL$ ($WH$).
+
+### Testing $\mathsf{H}_0$: There Is No LDA to $e^*$
+
+```{r}
+## import predictions from the 3 experimental algorithms trained in Obermeyer et al. (2019)
+# experimental algorithm that predicts total cost
+pred_tc <- read.csv("../../../data/pred_log_cost_df.csv")
+alg_tc <- as.numeric(pred_tc$log_cost_t_hat > quantile(pred_tc$log_cost_t_hat, 0.97))
+# experimental algorithm that predicts avoidable cost
+pred_ac <- read.csv("../../../data/pred_log_cost_avoidable_df.csv")
+alg_ac <- as.numeric(pred_ac$log_cost_avoidable_t_hat > quantile(pred_ac$log_cost_avoidable_t_hat, 0.97))
+# experimental algorithm that predicts number of active chronic conditions
+pred_acc <- read.csv("../../../data/pred_gagne_sum_t_df.csv")
+alg_acc <- as.numeric(pred_acc$gagne_sum_t_hat > quantile(pred_acc$gagne_sum_t_hat, 0.97))
+
+# the original algorithm that returns risk scores
+alg_orig <- as.numeric(df$risk_score_t > quantile(df$risk_score_t, 0.97))
+
+test2 <- test_LDA(target_alg_preds=rbind(alg_orig, alg_tc, alg_ac, alg_acc),
+                  X=X, G=G, Y=Y,
+                  est_nuisance=est_nuisance,
+                  num_bstp_rep=1000,
+                  optimizer="grid",
+                  kink=TRUE)
+```
+
+```{r echo=FALSE, fig.width=4, fig.height=3, warning=FALSE}
+e_orig <- cbind(mean((alg_orig*as.numeric(Y!=1)+(1-alg_orig)*as.numeric(Y!=0))[G==1]),
+                mean((alg_orig*as.numeric(Y!=1)+(1-alg_orig)*as.numeric(Y!=0))[G==0]))
+e_tc <- cbind(mean((alg_tc*as.numeric(Y!=1)+(1-alg_tc)*as.numeric(Y!=0))[G==1]),
+              mean((alg_tc*as.numeric(Y!=1)+(1-alg_tc)*as.numeric(Y!=0))[G==0]))
+e_ac <- cbind(mean((alg_ac*as.numeric(Y!=1)+(1-alg_ac)*as.numeric(Y!=0))[G==1]),
+              mean((alg_ac*as.numeric(Y!=1)+(1-alg_ac)*as.numeric(Y!=0))[G==0]))
+e_acc <- cbind(mean((alg_acc*as.numeric(Y!=1)+(1-alg_acc)*as.numeric(Y!=0))[G==1]),
+               mean((alg_acc*as.numeric(Y!=1)+(1-alg_acc)*as.numeric(Y!=0))[G==0]))
+
+plot_e <- plot_RBFvert
+plot_e[4:7, 1:2] <- rbind(e_orig, e_tc, e_ac, e_acc)
+plot_e[4:7, 3] <- c("alg_orig", "alg_tc", "alg_ac", "alg_acc")
+
+p_zoom + geom_point(data = plot_e,
+             aes(x = e_r, y = e_b, color=type, shape=type), size=3.5) +
+  scale_shape_manual("",values=c("est BL"=20, "est WH"=20, "est F"=20,
+                                 "alg_orig"=8, "alg_tc"=9, "alg_ac"=18, "alg_acc"=23)) +
+  scale_color_manual("", values=c("est BL"="firebrick", "est WH"="steelblue1", "est F"="black",
+                                  "alg_orig"="darkgreen", "alg_tc"="darkgreen", "alg_ac"="darkgreen", "alg_acc"="darkgreen")) + 
+  labs(x=TeX("$e_{bl}$"),
+       y=TeX("$e_{wh}$"),
+       title=TeX("Test $H_0$: There Is No LDA")) +
+  coord_cartesian(xlim = c(min(plot_e[,1])-abs(diff(range(plot_e[,1]))), max(plot_e[,1])+abs(diff(range(plot_e[,1])))), ylim = c(min(plot_e[,2])-abs(diff(range(plot_e[,2]))), max(plot_e[,2])+abs(diff(range(plot_e[,2])))))
+
+print("Test Null: There Is No LDA")
+print("Algorithm   Risk Allocation    Test Statistic    Critical Value   Reject")
+print(paste0(" alg_orig    (", sprintf("%.3f", e_orig[1]), ", ", sprintf("%.3f", e_orig[2]), ")         ", sprintf("%.3f", test2$LDA_stat[1]), "            ",  sprintf("%.3f", test2$BScv[1]), "        ",  test2$LDA_stat[1]>test2$BScv[1]))
+print(paste0("  alg_tc     (", sprintf("%.3f", e_tc[1]), ", ", sprintf("%.3f", e_tc[2]), ")         ", sprintf("%.3f", test2$LDA_stat[2]), "            ",  sprintf("%.3f", test2$BScv[2]), "        ",  test2$LDA_stat[2]>test2$BScv[2]))
+print(paste0("  alg_ac     (", sprintf("%.3f", e_ac[1]), ", ", sprintf("%.3f", e_ac[2]), ")         ", sprintf("%.3f", test2$LDA_stat[3]), "            ",  sprintf("%.3f", test2$BScv[3]), "        ",  test2$LDA_stat[3]>test2$BScv[3]))
+print(paste0(" alg_acc     (", sprintf("%.3f", e_acc[1]), ", ", sprintf("%.3f", e_acc[2]), ")         ", sprintf("%.3f", test2$LDA_stat[4]), "            ",  sprintf("%.3f", test2$BScv[4]), "        ",  test2$LDA_stat[4]>test2$BScv[4]))
+```
+
+### Constructing Confidence Sets for the Distance to the Fairest Point $F$
+
+```{r}
+# squared Euclidean distance
+rho <- function(a1, a2, b1, b2) {
+  return((a1-b1)^2+(a2-b2)^2)
+}
+
+## the original algorithm that returns risk scores ---
+# create parameter space of candidate (e, F)
+cand_eF_orig <- create_candidate_eF(X=X, G=G, Y=Y,
+                                    est_nuisance=est_nuisance,
+                                    est_F45_coord=F45,
+                                    num_grid=10000,
+                                    alg_preds=alg_orig,
+                                    optimizer="BFGS",
+                                    buffer=4*kappa_n)
+# only take non-negative candidate (e, F)
+nonneg_ind <- sample(which(cand_eF_orig$cand_F_cross[,1] > 0 & cand_eF_orig$cand_e_cross[,1] > 0 & cand_eF_orig$cand_e_cross[,2] > 0), size=3000)
+cand_eF_orig <- list("cand_F_cross"=cand_eF_orig$cand_F_cross[nonneg_ind, ],
+                     "cand_e_cross"=cand_eF_orig$cand_e_cross[nonneg_ind, ])
+# only the cross case matters, as `create_candidate_eF` returns NULL for the above and below case after then kappa_n adjustment
+test3_orig <- CS_eF_cross(target_alg_preds=matrix(alg_orig, nrow=1),
+                          X=X, G=G, Y=Y,
+                          est_nuisance=est_nuisance,
+                          F1=c(F45, cand_eF_orig$cand_F_cross[,1]),
+                          F2=c(F45, cand_eF_orig$cand_F_cross[,2]),
+                          e1=matrix(c(e_orig[1], cand_eF_orig$cand_e_cross[,1]), nrow=1),
+                          e2=matrix(c(e_orig[2], cand_eF_orig$cand_e_cross[,2]), nrow=1),
+                          num_bstp_rep=1000,
+                          dist_func="euclidean-sq",
+                          optimizer="BFGS",
+                          kink=TRUE)
+
+# CS_n^{\rho(e^*, F)}
+CS_orig <- cbind(rbind(c(F45, F45), cand_eF_orig$cand_F_cross)[which(test3_orig$rej==0), , drop=FALSE],
+                 rbind(e_orig, cand_eF_orig$cand_e_cross)[which(test3_orig$rej==0), , drop=FALSE])
+# retrieving distances
+CS_dist_orig <- c(min(rho(CS_orig[,1], CS_orig[,2], CS_orig[,3], CS_orig[,4])),
+                  max(rho(CS_orig[,1], CS_orig[,2], CS_orig[,3], CS_orig[,4])))
+
+
+## the experimental algorithm that predicts total cost ---
+# create parameter space of candidate (e, F)
+cand_eF_tc <- create_candidate_eF(X=X, G=G, Y=Y,
+                                  est_nuisance=est_nuisance,
+                                  est_F45_coord=F45,
+                                  num_grid=10000,
+                                  alg_preds=alg_tc,
+                                  optimizer="grid",
+                                  buffer=4*kappa_n)
+# only take non-negative candidate (e, F)
+nonneg_ind <- sample(which(cand_eF_tc$cand_F_cross[,1] > 0 & cand_eF_tc$cand_e_cross[,1] > 0 & cand_eF_tc$cand_e_cross[,2] > 0), size=3000)
+cand_eF_tc <- list("cand_F_cross"=cand_eF_tc$cand_F_cross[nonneg_ind, ],
+                   "cand_e_cross"=cand_eF_tc$cand_e_cross[nonneg_ind, ])
+# only the cross case matters, as `create_candidate_eF` returns NULL for the above and below case after then kappa_n adjustment
+test3_tc <- CS_eF_cross(target_alg_preds=matrix(alg_tc, nrow=1),
+                        X=X, G=G, Y=Y,
+                        est_nuisance=est_nuisance,
+                        F1=c(F45, cand_eF_tc$cand_F_cross[,1]),
+                        F2=c(F45, cand_eF_tc$cand_F_cross[,2]),
+                        e1=matrix(c(e_tc[1], cand_eF_tc$cand_e_cross[,1]), nrow=1),
+                        e2=matrix(c(e_tc[2], cand_eF_tc$cand_e_cross[,2]), nrow=1),
+                        num_bstp_rep=1000,
+                        dist_func="euclidean-sq",
+                        optimizer="BFGS",
+                        kink=TRUE)
+
+# CS_n^{\rho(e^*, F)}
+CS_tc <- cbind(rbind(c(F45, F45), cand_eF_tc$cand_F_cross)[which(test3_tc$rej==0), , drop=FALSE],
+               rbind(e_tc, cand_eF_tc$cand_e_cross)[which(test3_tc$rej==0), , drop=FALSE])
+# retrieving distances
+CS_dist_tc <- c(min(rho(CS_tc[,1], CS_tc[,2], CS_tc[,3], CS_tc[,4])),
+                max(rho(CS_tc[,1], CS_tc[,2], CS_tc[,3], CS_tc[,4])))
+
+
+## the experimental algorithm that predicts avoidable cost ---
+# create parameter space of candidate (e, F)
+cand_eF_ac <- create_candidate_eF(X=X, G=G, Y=Y,
+                                  est_nuisance=est_nuisance,
+                                  est_F45_coord=F45,
+                                  num_grid=10000,
+                                  alg_preds=alg_ac,
+                                  optimizer="grid",
+                                  buffer=4*kappa_n)
+# only take non-negative candidate (e, F)
+nonneg_ind <- sample(which(cand_eF_ac$cand_F_cross[,1] > 0 & cand_eF_ac$cand_e_cross[,1] > 0 & cand_eF_ac$cand_e_cross[,2] > 0), size=3000)
+cand_eF_ac <- list("cand_F_cross"=cand_eF_ac$cand_F_cross[nonneg_ind, ],
+                   "cand_e_cross"=cand_eF_ac$cand_e_cross[nonneg_ind, ])
+
+# only the cross case matters, as `create_candidate_eF` returns NULL for the above and below case after then kappa_n adjustment
+test3_ac <- CS_eF_cross(target_alg_preds=matrix(alg_ac, nrow=1),
+                        X=X, G=G, Y=Y,
+                        est_nuisance=est_nuisance,
+                        F1=c(F45, cand_eF_ac$cand_F_cross[,1]),
+                        F2=c(F45, cand_eF_ac$cand_F_cross[,2]),
+                        e1=matrix(c(e_ac[1], cand_eF_ac$cand_e_cross[,1]), nrow=1),
+                        e2=matrix(c(e_ac[2], cand_eF_ac$cand_e_cross[,2]), nrow=1),
+                        num_bstp_rep=1000,
+                        dist_func="euclidean-sq",
+                        optimizer="BFGS",
+                        kink=TRUE)
+
+# CS_n^{\rho(e^*, F)}
+CS_ac <- cbind(rbind(c(F45, F45), cand_eF_ac$cand_F_cross)[which(test3_ac$rej==0), , drop=FALSE],
+               rbind(e_ac, cand_eF_ac$cand_e_cross)[which(test3_ac$rej==0), , drop=FALSE])
+# retrieving distances
+CS_dist_ac <- c(min(rho(CS_ac[,1], CS_ac[,2], CS_ac[,3], CS_ac[,4])),
+                max(rho(CS_ac[,1], CS_ac[,2], CS_ac[,3], CS_ac[,4])))
+
+## the experimental algorithm that predicts active chronic conditions ---
+# create parameter space of candidate (e, F)
+cand_eF_acc <- create_candidate_eF(X=X, G=G, Y=Y,
+                                   est_nuisance=est_nuisance,
+                                   est_F45_coord=F45,
+                                   num_grid=10000,
+                                   alg_preds=alg_acc,
+                                   optimizer="grid",
+                                   buffer=4*kappa_n)
+# only take non-negative candidate (e, F)
+nonneg_ind <- sample(which(cand_eF_acc$cand_F_cross[,1] > 0 & cand_eF_acc$cand_e_cross[,1] > 0 & cand_eF_acc$cand_e_cross[,2] > 0), size=3000)
+cand_eF_acc <- list("cand_F_cross"=cand_eF_acc$cand_F_cross[nonneg_ind, ],
+                    "cand_e_cross"=cand_eF_acc$cand_e_cross[nonneg_ind, ])
+# only the cross case matters, as `create_candidate_eF` returns NULL for the above and below case after then kappa_n adjustment
+test3_acc <- CS_eF_cross(target_alg_preds=matrix(alg_acc, nrow=1),
+                         X=X, G=G, Y=Y,
+                         est_nuisance=est_nuisance,
+                         F1=c(F45, cand_eF_acc$cand_F_cross[,1]),
+                         F2=c(F45, cand_eF_acc$cand_F_cross[,2]),
+                         e1=matrix(c(e_acc[1], cand_eF_acc$cand_e_cross[,1]), nrow=1),
+                         e2=matrix(c(e_acc[2], cand_eF_acc$cand_e_cross[,2]), nrow=1),
+                         num_bstp_rep=1000,
+                         dist_func="euclidean-sq",
+                         optimizer="BFGS",
+                         kink=TRUE)
+
+# CS_n^{\rho(e^*, F)}
+CS_acc <- cbind(rbind(c(F45, F45), cand_eF_acc$cand_F_cross)[which(test3_acc$rej==0), , drop=FALSE],
+                rbind(e_acc, cand_eF_acc$cand_e_cross)[which(test3_acc$rej==0), , drop=FALSE])
+# retrieving distances
+CS_dist_acc <- c(min(rho(CS_acc[,1], CS_acc[,2], CS_acc[,3], CS_acc[,4])),
+                 max(rho(CS_acc[,1], CS_acc[,2], CS_acc[,3], CS_acc[,4])))
+```
+
+Note: Light-green (resp., light-gray) circles correspond to candidate values for $e^*$ ($F$), and green (yellow) diamonds correspond to accepted candidate values for $e^*$ ($F$). The estimated $F$ (yellow circle) plotted in the figure below is the one obtained using Eq. (20) and different from the estimated $F$ (black circle) plotted in the previous figures, which is the fairest point corresponding to the estimated feasible set using Eq. (26). The distance-to-F test as described in Section 7 uses the yellow $F$.
+
+```{r echo=FALSE, fig.width=8, fig.height=6, warning=FALSE}
+p_dist <- ggplot(ss, aes(x=e_r, y=e_b)) +
+  geom_abline(intercept=0, slope=1, linetype="dashed", color="lightgray", linewidth=.25) +
+  theme_classic() +
+  labs(x=TeX("$e_{bl}$"),
+       y=TeX("$e_{wh}$")) +
+  geom_point(data = plot_e[3:7,],
+             aes(x = e_r, y = e_b, color=type, shape=type), size=3.5) +
+  scale_shape_manual("",values=c("est F"=19,
+                                 "alg_orig"=8, "alg_tc"=9, "alg_ac"=18, "alg_acc"=23)) +
+  scale_color_manual("", values=c("est F"="yellow",
+                                  "alg_orig"="darkgreen", "alg_tc"="darkgreen", "alg_ac"="darkgreen", "alg_acc"="darkgreen"))
+
+# store the legend
+legend_dist <- ggplotGrob(p_dist)$grobs[[which(sapply(ggplotGrob(p_dist)$grobs, function(x) x$name) == "guide-box")]]
+
+
+p_orig <- ggplot(ss, aes(x=e_r, y=e_b)) +
+  geom_abline(intercept=0, slope=1, linetype="dashed", color="lightgray", linewidth=.25) +
+  theme_classic() +
+  labs(x=TeX("$e_{bl}$"),
+       y=TeX("$e_{wh}$")) +
+  geom_point(data=data.frame(e_r=c(e_orig[1], cand_eF_orig$cand_e_cross[,1]), 
+                             e_b=c(e_orig[2], cand_eF_orig$cand_e_cross[,2])), 
+             aes(x = e_r, y = e_b), color='mediumseagreen', alpha=0.08) +
+  geom_point(data=data.frame(e_r=c(F45, cand_eF_orig$cand_F_cross[,1]), 
+                             e_b=c(F45, cand_eF_orig$cand_F_cross[,2])), 
+             aes(x = e_r, y = e_b), color='black', alpha=0.1, size=2)+
+  geom_point(data=data.frame(e_r=c(F45, cand_eF_orig$cand_F_cross[,1])[which(test3_orig$rej==0)],
+                             e_b=c(F45, cand_eF_orig$cand_F_cross[,2])[which(test3_orig$rej==0)]), 
+             aes(x = e_r, y = e_b), color='khaki1', shape=18, alpha=0.8) +
+  geom_point(data=data.frame(e_r=c(e_orig[1], cand_eF_orig$cand_e_cross[,1])[which(test3_orig$rej==0)], 
+                             e_b=c(e_orig[2], cand_eF_orig$cand_e_cross[,2])[which(test3_orig$rej==0)]), 
+             aes(x = e_r, y = e_b), color='palegreen3', shape=18, alpha=0.8)+
+  coord_cartesian(xlim=c(0, 0.25), ylim=c(0, 0.25)) +
+  geom_point(data = plot_e[3:4,],
+             aes(x = e_r, y = e_b, color=type, shape=type), size=3.5) +
+  scale_shape_manual("",values=c("est F"=19,
+                                 "alg_orig"=8, "alg_tc"=9, "alg_ac"=18, "alg_acc"=23)) +
+  scale_color_manual("", values=c("est F"="yellow",
+                                  "alg_orig"="darkgreen", "alg_tc"="darkgreen", "alg_ac"="darkgreen", "alg_acc"="darkgreen")) +
+  theme(legend.position="none")
+
+
+p_tc <- ggplot(ss, aes(x=e_r, y=e_b)) +
+  geom_abline(intercept=0, slope=1, linetype="dashed", color="lightgray", linewidth=.25) +
+  theme_classic() +
+  labs(x=TeX("$e_{bl}$"),
+       y=TeX("$e_{wh}$")) +
+  geom_point(data=data.frame(e_r=c(e_tc[1], cand_eF_tc$cand_e_cross[,1]), 
+                             e_b=c(e_tc[2], cand_eF_tc$cand_e_cross[,2])), 
+             aes(x = e_r, y = e_b), color='mediumseagreen', alpha=0.08) +
+  geom_point(data=data.frame(e_r=c(F45, cand_eF_tc$cand_F_cross[,1]), 
+                             e_b=c(F45, cand_eF_tc$cand_F_cross[,2])), 
+             aes(x = e_r, y = e_b), color='black', alpha=0.1, size=2)+
+  geom_point(data=data.frame(e_r=c(F45, cand_eF_tc$cand_F_cross[,1])[which(test3_tc$rej==0)],
+                             e_b=c(F45, cand_eF_tc$cand_F_cross[,2])[which(test3_tc$rej==0)]), 
+             aes(x = e_r, y = e_b), color='khaki1', shape=18, alpha=0.8) +
+  geom_point(data=data.frame(e_r=c(e_tc[1], cand_eF_tc$cand_e_cross[,1])[which(test3_tc$rej==0)], 
+                             e_b=c(e_tc[2], cand_eF_tc$cand_e_cross[,2])[which(test3_tc$rej==0)]), 
+             aes(x = e_r, y = e_b), color='palegreen3', shape=18, alpha=0.8)+
+  coord_cartesian(xlim=c(0, 0.25), ylim=c(0, 0.25)) +
+  geom_point(data = plot_e[c(3, 5),],
+             aes(x = e_r, y = e_b, color=type, shape=type), size=3.5) +
+  scale_shape_manual("",values=c("est F"=19,
+                                 "alg_orig"=8, "alg_tc"=9, "alg_ac"=18, "alg_acc"=23)) +
+  scale_color_manual("", values=c("est F"="yellow",
+                                  "alg_orig"="darkgreen", "alg_tc"="darkgreen", "alg_ac"="darkgreen", "alg_acc"="darkgreen")) +
+  theme(legend.position="none")
+
+
+p_ac <- ggplot(ss, aes(x=e_r, y=e_b)) +
+  geom_abline(intercept=0, slope=1, linetype="dashed", color="lightgray", linewidth=.25) +
+  theme_classic() +
+  labs(x=TeX("$e_{bl}$"),
+       y=TeX("$e_{wh}$")) +
+  geom_point(data=data.frame(e_r=c(e_ac[1], cand_eF_ac$cand_e_cross[,1]), 
+                             e_b=c(e_ac[2], cand_eF_ac$cand_e_cross[,2])), 
+             aes(x = e_r, y = e_b), color='mediumseagreen', alpha=0.08) +
+  geom_point(data=data.frame(e_r=c(F45, cand_eF_ac$cand_F_cross[,1]), 
+                             e_b=c(F45, cand_eF_ac$cand_F_cross[,2])), 
+             aes(x = e_r, y = e_b), color='black', alpha=0.1, size=2)+
+  geom_point(data=data.frame(e_r=c(F45, cand_eF_ac$cand_F_cross[,1])[which(test3_ac$rej==0)],
+                             e_b=c(F45, cand_eF_ac$cand_F_cross[,2])[which(test3_ac$rej==0)]), 
+             aes(x = e_r, y = e_b), color='khaki1', shape=18, alpha=0.8) +
+  geom_point(data=data.frame(e_r=c(e_ac[1], cand_eF_ac$cand_e_cross[,1])[which(test3_ac$rej==0)], 
+                             e_b=c(e_ac[2], cand_eF_ac$cand_e_cross[,2])[which(test3_ac$rej==0)]), 
+             aes(x = e_r, y = e_b), color='palegreen3', shape=18, alpha=0.8)+
+  coord_cartesian(xlim=c(0, 0.25), ylim=c(0, 0.25)) +
+  geom_point(data = plot_e[c(3, 6),],
+             aes(x = e_r, y = e_b, color=type, shape=type), size=3.5) +
+  scale_shape_manual("",values=c("est F"=19,
+                                 "alg_orig"=8, "alg_tc"=9, "alg_ac"=18, "alg_acc"=23)) +
+  scale_color_manual("", values=c("est F"="yellow",
+                                  "alg_orig"="darkgreen", "alg_tc"="darkgreen", "alg_ac"="darkgreen", "alg_acc"="darkgreen")) +
+  theme(legend.position="none")
+
+
+
+p_acc <- ggplot(ss, aes(x=e_r, y=e_b)) +
+  geom_abline(intercept=0, slope=1, linetype="dashed", color="lightgray", linewidth=.25) +
+  theme_classic() +
+  labs(x=TeX("$e_{bl}$"),
+       y=TeX("$e_{wh}$")) +
+  geom_point(data=data.frame(e_r=c(e_acc[1], cand_eF_acc$cand_e_cross[,1]), 
+                             e_b=c(e_acc[2], cand_eF_acc$cand_e_cross[,2])), 
+             aes(x = e_r, y = e_b), color='mediumseagreen', alpha=0.08) +
+  geom_point(data=data.frame(e_r=c(F45, cand_eF_acc$cand_F_cross[,1]), 
+                             e_b=c(F45, cand_eF_acc$cand_F_cross[,2])), 
+             aes(x = e_r, y = e_b), color='black', alpha=0.1, size=2)+
+  geom_point(data=data.frame(e_r=c(F45, cand_eF_acc$cand_F_cross[,1])[which(test3_acc$rej==0)],
+                             e_b=c(F45, cand_eF_acc$cand_F_cross[,2])[which(test3_acc$rej==0)]), 
+             aes(x = e_r, y = e_b), color='khaki1', shape=18, alpha=0.8) +
+  geom_point(data=data.frame(e_r=c(e_acc[1], cand_eF_acc$cand_e_cross[,1])[which(test3_acc$rej==0)], 
+                             e_b=c(e_acc[2], cand_eF_acc$cand_e_cross[,2])[which(test3_acc$rej==0)]), 
+             aes(x = e_r, y = e_b), color='palegreen3', shape=18, alpha=0.8)+
+  coord_cartesian(xlim=c(0, 0.25), ylim=c(0, 0.25)) +
+  geom_point(data = plot_e[c(3 ,7),],
+             aes(x = e_r, y = e_b, color=type, shape=type), size=3.5) +
+  scale_shape_manual("",values=c("est F"=19,
+                                 "alg_orig"=8, "alg_tc"=9, "alg_ac"=18, "alg_acc"=23)) +
+  scale_color_manual("", values=c("est F"="yellow",
+                                  "alg_orig"="darkgreen", "alg_tc"="darkgreen", "alg_ac"="darkgreen", "alg_acc"="darkgreen")) +
+  theme(legend.position="none")
+
+grid.arrange(
+  arrangeGrob(p_orig, p_tc, p_ac, p_acc, ncol = 2),
+  legend_dist,
+  ncol = 2,
+  widths = c(3, 0.5),
+  top = textGrob(TeX("Candidate and Accepted (\\tilde{e}, \\tilde{F})"), 
+                 gp=gpar(fontsize=20,font=3))
+)
+
+
+print("Confidence Sets for the Squared-Euclidean Distance to F:")
+print(paste0("Estimated F: (", sprintf("%.3f", F45), ", ", sprintf("%.3f", F45), ")"))
+print("Algorithm     Risk Allocation    Estimated Distance    Confidence Set")
+print(paste0(" alg_orig     (", sprintf("%.3f", e_orig[1]), ", ", sprintf("%.3f", e_orig[2]), ")          ",   sprintf("%.4f", rho(F45, F45, e_orig[1], e_orig[2])), "           (", sprintf("%.3f", CS_dist_orig[1]), ", ", sprintf("%.3f", CS_dist_orig[2]), ")"))
+print(paste0(" alg_tc       (", sprintf("%.3f", e_tc[1]), ", ", sprintf("%.3f", e_tc[2]), ")          ",   sprintf("%.4f", rho(F45, F45, e_tc[1], e_tc[2])), "           (", sprintf("%.3f", CS_dist_tc[1]), ", ", sprintf("%.3f", CS_dist_tc[2]), ")"))
+print(paste0(" alg_ac       (", sprintf("%.3f", e_ac[1]), ", ", sprintf("%.3f", e_ac[2]), ")          ",   sprintf("%.4f", rho(F45, F45, e_ac[1], e_ac[2])), "           (", sprintf("%.3f", CS_dist_ac[1]), ", ", sprintf("%.3f", CS_dist_ac[2]), ")"))
+print(paste0(" alg_acc      (", sprintf("%.3f", e_acc[1]), ", ", sprintf("%.3f", e_acc[2]), ")          ",   sprintf("%.4f", rho(F45, F45, e_acc[1], e_acc[2])), "           (", sprintf("%.3f", CS_dist_acc[1]), ", ", sprintf("%.3f", CS_dist_acc[2]), ")"))
+```

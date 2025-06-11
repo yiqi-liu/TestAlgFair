@@ -1,0 +1,44 @@
+
+R version 4.4.3 (2025-02-28) -- "Trophy Case"
+Copyright (C) 2025 The R Foundation for Statistical Computing
+Platform: x86_64-pc-linux-gnu
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+  Natural language support but running in an English locale
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+> ############################################
+> # Knit .Rmd file to .html file in directory
+> #    ../application/results/rep-results
+> ############################################
+> 
+> rmarkdown::render("../results/rep-results/variability.Rmd", 
++                   output_dir = "../results/rep-results/")
+
+
+processing file: variability.Rmd
+1/6                  
+2/6 [setup]          
+3/6                  
+4/6 [unnamed-chunk-1]
+5/6                  
+6/6 [unnamed-chunk-2]
+output file: variability.knit.md
+
+/home/yl3467/pandoc-3.2/bin/pandoc +RTS -K512m -RTS variability.knit.md --to html4 --from markdown+autolink_bare_uris+tex_math_single_backslash --output /home2/yl3467/replication-package/application/results/rep-results/variability.html --lua-filter /programs/R-4.4.3/lib64/R/library/rmarkdown/rmarkdown/lua/pagebreak.lua --lua-filter /programs/R-4.4.3/lib64/R/library/rmarkdown/rmarkdown/lua/latex-div.lua --embed-resources --standalone --variable bs3=TRUE --section-divs --template /programs/R-4.4.3/lib64/R/library/rmarkdown/rmd/h/default.html --no-highlight --variable highlightjs=1 --variable theme=bootstrap --mathjax --variable 'mathjax-url=https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML' --include-in-header /tmp/RtmpPMQe7P/rmarkdown-str384bb17d734c5.html 
+
+Output created: /home2/yl3467/replication-package/application/results/rep-results/variability.html
+> 
+> proc.time()
+   user  system elapsed 
+  1.055   0.266  30.599 

@@ -1,0 +1,51 @@
+
+R version 4.4.3 (2025-02-28) -- "Trophy Case"
+Copyright (C) 2025 The R Foundation for Statistical Computing
+Platform: x86_64-pc-linux-gnu
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+  Natural language support but running in an English locale
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+[Previously saved workspace restored]
+
+> ##############################
+> # Knit .Rmd file to .html file
+> ##############################
+> 
+> rmarkdown::render("../results/simulation-DGPplot.Rmd", 
++                   output_dir = "../results/")
+
+
+processing file: simulation-DGPplot.Rmd
+1/12                  
+2/12 [setup]          
+3/12                  
+4/12 [unnamed-chunk-1]
+5/12                  
+6/12 [unnamed-chunk-2]
+7/12                  
+8/12 [unnamed-chunk-3]
+9/12                  
+10/12 [unnamed-chunk-4]
+11/12                  
+12/12 [unnamed-chunk-5]
+output file: simulation-DGPplot.knit.md
+
+/home/yl3467/pandoc-3.2/bin/pandoc +RTS -K512m -RTS simulation-DGPplot.knit.md --to html4 --from markdown+autolink_bare_uris+tex_math_single_backslash --output /home2/yl3467/replication-package/simulation/results/simulation-DGPplot.html --lua-filter /programs/R-4.4.3/lib64/R/library/rmarkdown/rmarkdown/lua/pagebreak.lua --lua-filter /programs/R-4.4.3/lib64/R/library/rmarkdown/rmarkdown/lua/latex-div.lua --embed-resources --standalone --variable bs3=TRUE --section-divs --template /programs/R-4.4.3/lib64/R/library/rmarkdown/rmd/h/default.html --no-highlight --variable highlightjs=1 --variable theme=bootstrap --mathjax --variable 'mathjax-url=https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML' --include-in-header /tmp/Rtmpvs7hjY/rmarkdown-str6bf535b764c6f.html 
+
+Output created: /home2/yl3467/replication-package/simulation/results/simulation-DGPplot.html
+> 
+> proc.time()
+     user    system   elapsed 
+26953.915 19007.309  7085.761 

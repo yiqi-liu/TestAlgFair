@@ -1,0 +1,357 @@
+---
+title: 'Simulation: All Plots'
+author: "Yiqi Liu & Francesca Molinari"
+date: '`r Sys.Date()`'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, echo = TRUE)
+library(gridExtra)
+library(grid)
+library(ggplot2)
+library(latex2exp)
+library(concaveman)
+source("../../all-func.R")
+
+set.seed(0)
+```
+
+## Data generating process
+
+$$
+X \equiv (X_1, X_2, ..., X_{20})\in\mathbb{R}^{20}\\
+\text{for } j \in \{1,4,...,20\},~X_j \stackrel{d}{\sim} Normal(0,1) \text{ truncated to } [-3,3],\\
+X_2 \stackrel{d}{\sim} Unif(0,1),~X_3\stackrel{d}{\sim}Beta(2,2),~G \stackrel{d}{\sim} Bern\left(p=0.6\right)
+$$
+
+For a group-balanced DGP, we generate $$
+Y \,|\, G, X\,\,\stackrel{d}{\sim} Bern\left(p=\frac{G}{1+e^{-(X_1+X_2+0.5X_3)}}+\frac{(1-G)}{1+e^{-(-X_1-0.5X_2+X_4)}}\right)
+$$
+
+For an $r$-skewed DGP, we generate $$
+Y \,|\, G, X\,\,\stackrel{d}{\sim} Bern\left(p=\frac{G}{1+e^{-2(X_1+X_2+X_3)}}+\frac{(1-G)}{1+e^{-0.7(X_1+0.5X_2+0.6X_4)}}\right)
+$$ We consider testing, for both of the group-balanced and r-skewed DGPs, whether there is an LDA to the following algorithm, `alg_logit`, which is a logistic regression trained on a sample consisted of data from both DGPs.
+
+```{r}
+train_data1 <- testDGP(5000)
+train_data2 <- testDGP(5000)
+
+train_X <- rbind(train_data1$X, train_data2$X)
+train_Y <- append(train_data1$Y_balance, train_data2$Y_rskew)
+
+train_data <- data.frame(cbind(train_X, train_Y))
+colnames(train_data) <- append(sapply(1:20, function(num){paste0("X",num)}), "Y")
+
+alg_logit <- glm(Y ~ ., data = train_data, family=binomial())
+```
+
+We then take `alg_logit` as the given $a^*$, and simulate the true risk allocation $e^*$ induced by $a^*$ for each of the group-balanced and r-skewed DGP (plotted below as a green star).
+
+```{r include=FALSE}
+test_data <- testDGP(1e7)
+eval_Y_balance <- test_data$Y_balance
+eval_Y_rskew <- test_data$Y_rskew
+eval_G <- test_data$G
+eval_data_X <- data.frame(test_data$X)
+
+colnames(eval_data_X) <- sapply(1:20, function(num){paste0("X",num)})
+
+alg_pred <- predict.glm(alg_logit, eval_data_X, type="response")
+
+true_mu_1 <- 0.6
+
+logit_e_score_balance <- alg_pred*as.numeric(1 != eval_Y_balance)+(1-alg_pred)*as.numeric(0 != eval_Y_balance)
+logit_e_balance <- matrix(c(mean(as.numeric(eval_G==1)*logit_e_score_balance/true_mu_1),
+                            mean(as.numeric(eval_G==0)*logit_e_score_balance/(1-true_mu_1))), 
+                          ncol=2)
+
+logit_e_score_rskew <- alg_pred*as.numeric(1 != eval_Y_rskew)+(1-alg_pred)*as.numeric(0 != eval_Y_rskew)
+logit_e_rskew <- matrix(c(mean(as.numeric(eval_G==1)*logit_e_score_rskew/true_mu_1),
+                            mean(as.numeric(eval_G==0)*logit_e_score_rskew/(1-true_mu_1))), 
+                          ncol=2)
+
+num_q <- 500 # number of directions to check
+grid_q <- t(as.matrix(sapply(seq(0, 2*pi, length.out=num_q), function(rad){c(cos(rad), sin(rad))})))
+
+# grid of (q, v) used to simulate the feasible set
+grid_q <- rbind(grid_q, grid_q)
+grid_v <- data.matrix(cbind(c(rep(1, each=num_q), rep(0, each=num_q)), c(rep(0, each=num_q), rep(1, each=num_q))))
+
+# directions (q, v) that yield coordinates of R and B
+RB_q <- matrix(c(-1, 0, -1, 0, 0, -1, 0, -1), byrow=TRUE, ncol=2)
+RB_v <- matrix(c(1, 0, 0, 1, 1, 0, 0, 1), byrow=TRUE, ncol=2)
+
+q <- rbind(grid_q, RB_q)
+v <- rbind(grid_v, RB_v)
+
+test_X1 <- test_data$X[,1]
+test_X2 <- test_data$X[,2]
+test_X3 <- test_data$X[,3]
+test_X4 <- test_data$X[,4]
+
+# true theta_dg(X) for each X in test_data
+true_mu_1 <- 0.6
+true_theta_11_balance <- 1-1/(1+exp(-(test_X1+test_X2+0.5*test_X3)))
+true_theta_01_balance <- 1/(1+exp(-(test_X1+test_X2+0.5*test_X3)))
+true_theta_10_balance <- 1-1/(1+exp(-(-test_X1-0.5*test_X2+test_X4)))
+true_theta_00_balance <- 1/(1+exp(-(-test_X1-0.5*test_X2+test_X4)))
+
+true_theta_11_rskew <- 1-1/(1+exp(-2*(test_X1+test_X2+test_X3)))
+true_theta_01_rskew <- 1/(1+exp(-2*(test_X1+test_X2+test_X3)))
+true_theta_10_rskew <- 1-1/(1+exp(-0.7*(test_X1+0.5*test_X2+0.6*test_X4)))
+true_theta_00_rskew <- 1/(1+exp(-0.7*(test_X1+0.5*test_X2+0.6*test_X4)))
+
+## group-balanced config
+true_sf_balance <- matrix(data=NA, ncol=1, nrow=nrow(q)) # initialize final output vector
+
+diff_theta_b <- true_theta_10_balance-true_theta_00_balance # theta_1^b - theta_0^b
+diff_theta_r <- true_theta_11_balance-true_theta_01_balance # theta_1^r - theta_0^r
+
+for (i in 1:nrow(q)){
+  # direction (q, v) in the current iteration
+  q_cur <- q[i,]
+  v_cur <- v[i,]
+  inner_prod_q <- q_cur[1]*diff_theta_r + q_cur[2]*diff_theta_b # q'k(\theta)
+  inner_prod_v <- v_cur[1]*diff_theta_r + v_cur[2]*diff_theta_b # v'k(\theta)
+  sign_inner_prod <- as.numeric(inner_prod_q > 0) # 1(q'k(\theta) > 0)
+  
+  score <- v_cur[1]*true_theta_01_balance+v_cur[2]*true_theta_00_balance+
+    inner_prod_v*as.numeric(sign_inner_prod>0)
+  
+  # then the simulated support function in the current direction (q_cur, v_cur) is the sample average of score over X
+  true_sf_balance[i,] <- mean(score)
+}
+
+## SIMULATING TRUE F
+f <- function(c){ # objective function
+  mean((-1-c)*true_theta_01_balance+c*true_theta_00_balance+
+         ((-1-c)*diff_theta_r + c*diff_theta_b)*
+         as.numeric((-1-c)*diff_theta_r + c*diff_theta_b>0))
+}
+
+c <- torch_tensor(0, requires_grad=TRUE)
+optim <- optim_adam(params=list(c), lr=0.1)
+for (i in 1:10000) {
+  optim$zero_grad()            # initialize
+  loss <- f(c)                 # get loss at current c
+  loss$backward()              # backpropagation
+  optim$step()                 # descent
+}
+
+true_F_coord_balance <- -loss$item() # 0.415
+
+## r-skewed config
+true_sf_rskew <- matrix(data=NA, ncol=1, nrow=nrow(q)) # initialize final output vector
+
+diff_theta_b <- true_theta_10_rskew-true_theta_00_rskew # theta_1^b - theta_0^b
+diff_theta_r <- true_theta_11_rskew-true_theta_01_rskew # theta_1^r - theta_0^r
+
+for (i in 1:nrow(q)){
+  # direction (q, v) in the current iteration
+  q_cur <- q[i,]
+  v_cur <- v[i,]
+  inner_prod_q <- q_cur[1]*diff_theta_r + q_cur[2]*diff_theta_b # q'k(\theta)
+  inner_prod_v <- v_cur[1]*diff_theta_r + v_cur[2]*diff_theta_b # v'k(\theta)
+  sign_inner_prod <- as.numeric(inner_prod_q > 0) # 1(q'k(\theta) > 0)
+  
+  score <- v_cur[1]*true_theta_01_rskew+v_cur[2]*true_theta_00_rskew+
+    inner_prod_v*as.numeric(sign_inner_prod>0)
+  
+  # then the simulated support function in the current direction (q_cur, v_cur) is the sample average of score over X
+  true_sf_rskew[i,] <- mean(score)
+}
+
+
+f <- function(c){ # objective function
+  mean((-1-c)*true_theta_01_rskew+c*true_theta_00_rskew+
+         ((-1-c)*diff_theta_r + c*diff_theta_b)*
+         as.numeric((-1-c)*diff_theta_r + c*diff_theta_b>0))
+}
+
+c <- torch_tensor(0, requires_grad=TRUE)
+optim <- optim_adam(params=list(c), lr=0.1)
+for (i in 1:10000) {
+  optim$zero_grad()            # initialize
+  loss <- f(c)                 # get loss at current c
+  loss$backward()              # backpropagation
+  optim$step()                 # descent
+}
+true_F_coord_rskew <- -loss$item() # 0.354
+
+plot_balance <- data.frame(e_r = true_sf_balance[1:num_q],
+                           e_b = true_sf_balance[(num_q+1):(2*num_q)])
+
+plot_rskew <- data.frame(e_r = true_sf_rskew[1:num_q],
+                         e_b = true_sf_rskew[(num_q+1):(2*num_q)])
+
+plot_RB_balance <- data.frame(e_r = c(true_sf_balance[(2*num_q)+1], true_sf_balance[(2*num_q)+3], true_F_coord_balance, logit_e_balance[1]), 
+                              e_b = c(true_sf_balance[(2*num_q)+2], true_sf_balance[(2*num_q)+4], true_F_coord_balance, logit_e_balance[2]), 
+                              type = c("true R", "true B", "true F", "alg_logit"))
+
+plot_RB_rskew <- data.frame(e_r = c(true_sf_rskew[(2*num_q)+1], true_sf_rskew[(2*num_q)+3], true_F_coord_rskew, logit_e_rskew[1]),
+                            e_b = c(true_sf_rskew[(2*num_q)+2], true_sf_rskew[(2*num_q)+4], true_F_coord_rskew, logit_e_rskew[2]),
+                            type = c("true R", "true B", "true F", "alg_logit"))
+
+```
+
+```{r echo=FALSE, fig.width=8, fig.height=3, warning=FALSE}
+write.csv(plot_RB_balance, "../truth_balance.csv", row.names = F)
+write.csv(plot_RB_rskew, "../truth_rskew.csv", row.names = F)
+
+print("Group-balanced config:")
+print(paste0("true R=(", plot_RB_balance[1,1], ", ", plot_RB_balance[1,2], ")"))
+print(paste0("true B=(", plot_RB_balance[2,1], ", ", plot_RB_balance[2,2], ")"))
+print(paste0("true F=(", plot_RB_balance[3,1], ", ", plot_RB_balance[3,2], ")"))
+print(paste0("`alg_logit` risk=(", plot_RB_balance[4,1], ", ", plot_RB_balance[4,2], ")"))
+
+print("r-skewed config:")
+print(paste0("true R=(", plot_RB_rskew[1,1], ", ", plot_RB_rskew[1,2], ")"))
+print(paste0("true B=(", plot_RB_rskew[2,1], ", ", plot_RB_rskew[2,2], ")"))
+print(paste0("true F=(", plot_RB_rskew[3,1], ", ", plot_RB_rskew[3,2], ")"))
+print(paste0("`alg_logit` risk=(", plot_RB_rskew[4,1], ", ", plot_RB_rskew[4,2], ")"))
+
+p1 <- ggplot(plot_balance, aes(x=e_r, y=e_b)) +
+  geom_polygon(aes(x=e_r, y=e_b), colour='pink', fill='lavenderblush', alpha = 0.5) + 
+  xlim(c(.15, .85)) + ylim(c(.2, .75)) +
+  theme_classic() +
+  geom_point(data = plot_RB_balance,
+             aes(x = e_r, y = e_b, color=type, shape=type), 
+             size=2.5) +
+  scale_shape_manual("",values=c("alg_logit"=8, "true F"=13,
+                                 "true R"=13, "true B"=13)) +
+  scale_color_manual("", values=c("alg_logit"="darkgreen",
+                                  "true R"="red", 
+                                  "true B"="deepskyblue", 
+                                  "true F"="black")) +
+  geom_abline(intercept=0, slope=1, linetype="dashed", color="lightgray", linewidth=.25) +
+  labs(title = "Group-balanced feasible set",
+       x=TeX("$e_r$"),
+       y=TeX("$e_b$"))
+
+p2 <- ggplot(plot_rskew, aes(x=e_r, y=e_b)) +
+  geom_polygon(aes(x=e_r, y=e_b), colour='pink', fill='lavenderblush', alpha = 0.5) +
+  xlim(c(.15, .85)) + ylim(c(.2, .75)) +
+  theme_classic() +
+  geom_point(data = plot_RB_rskew,
+             aes(x = e_r, y = e_b, color=type, shape=type),
+             size=2.5) +
+  scale_shape_manual("", values=c("alg_logit"=8, "true F"=13,
+                                  "true R"=13, "true B"=13)) +
+  scale_color_manual("", values=c("alg_logit"="darkgreen",
+                                  "true R"="red", 
+                                  "true B"="deepskyblue", 
+                                  "true F"="black")) +
+  geom_abline(intercept=0, slope=1, linetype="dashed", color="lightgray", linewidth=.25) +
+  labs(title="r-skewed feasible set",
+       x=TeX("$e_r$"),
+       y=TeX("$e_b$"))
+grid.arrange(p1, p2, ncol=2)
+```
+
+## Building confidence set for the fairness-accuracy frontier
+
+The following code builds confidence sets for the fairness-accuracy frontier.
+
+```{r}
+n <- 10000
+sample_frontier <- testDGP(n)
+
+## group-balanced DGP -------
+# create a grid of candidate values of e to test for
+est_nuisance_balance <- nuisance(Y=sample_frontier$Y_balance,
+                                 X=sample_frontier$X,
+                                 G=sample_frontier$G)
+cand_e_balance <- create_candidate_e_frontier(Y=sample_frontier$Y_balance,
+                                              X=sample_frontier$X,
+                                              G=sample_frontier$G,
+                                              est_nuisance=est_nuisance_balance,
+                                              num_grid=5000,
+                                              buffer=2*sqrt(log(n))/sqrt(n))
+
+# compute the test statistics, critical values, and rejection decision
+FAfrontier_gs_balance <- CS_FAfrontier(Y=sample_frontier$Y_balance,
+                                       X=sample_frontier$X,
+                                       G=sample_frontier$G,
+                                       e1=cand_e_balance[,1],
+                                       e2=cand_e_balance[,2],
+                                       est_nuisance=est_nuisance_balance,
+                                       optimizer="grid", kink=TRUE,
+                                       num_bstp_rep=1000)
+
+plot_FAfrontier_balance <- concaveman(cand_e_balance[FAfrontier_gs_balance$rej==0,], concavity=4)
+
+## r-skewed DGP -------
+# create a grid of candidate values of e to test for
+est_nuisance_rskew <- nuisance(Y=sample_frontier$Y_rskew,
+                               X=sample_frontier$X,
+                               G=sample_frontier$G)
+cand_e_rskew <- create_candidate_e_frontier(Y=sample_frontier$Y_rskew,
+                                            X=sample_frontier$X,
+                                            G=sample_frontier$G,
+                                            est_nuisance=est_nuisance_rskew,
+                                            num_grid=5000,
+                                            buffer=2*sqrt(log(n))/sqrt(n))
+
+# compute the test statistics, critical values, and rejection decision
+FAfrontier_gs_rskew <- CS_FAfrontier(Y=sample_frontier$Y_rskew,
+                                     X=sample_frontier$X,
+                                     G=sample_frontier$G,
+                                     e1=cand_e_rskew[,1],
+                                     e2=cand_e_rskew[,2],
+                                     est_nuisance=est_nuisance_rskew,
+                                     optimizer="grid", kink=TRUE,
+                                     num_bstp_rep=1000)
+
+plot_FAfrontier_rskew <- concaveman(cand_e_rskew[FAfrontier_gs_rskew$rej==0,], concavity=4)
+```
+
+```{r echo=FALSE, fig.width=8, fig.height=3.5, warning=FALSE}
+p3 <- ggplot(plot_balance, aes(x=e_r, y=e_b)) +
+  geom_polygon(data=data.frame(e_r=plot_FAfrontier_balance[,1], e_b=plot_FAfrontier_balance[,2]), aes(x = e_r, y = e_b), color="black", fill="lightsteelblue3", linewidth=0.2, alpha=0.5) +
+  geom_polygon(aes(x=e_r, y=e_b), colour='pink', fill='lavenderblush', alpha = 0.5) + 
+  xlim(c(.15, .85)) + ylim(c(.2, .75)) +
+  theme_classic() +
+  geom_point(data = plot_RB_balance,
+             aes(x = e_r, y = e_b, color=type, shape=type), 
+             size=2.5) +
+  scale_shape_manual("",values=c("alg_logit"=8, "true F"=13,
+                                 "true R"=13, "true B"=13)) +
+  scale_color_manual("", values=c("alg_logit"="darkgreen",
+                                  "true R"="red", 
+                                  "true B"="deepskyblue", 
+                                  "true F"="black")) +
+  geom_abline(intercept=0, slope=1, linetype="dashed", color="lightgray", linewidth=.25) +
+  labs(title = "Group-balanced feasible set",
+       x=TeX("$e_r$"),
+       y=TeX("$e_b$"))
+
+# store the legend
+legend <- ggplotGrob(p3)$grobs[[which(sapply(ggplotGrob(p3)$grobs, function(x) x$name) == "guide-box")]]
+
+p4 <- ggplot(plot_rskew, aes(x=e_r, y=e_b)) +
+  geom_polygon(data=data.frame(e_r=plot_FAfrontier_rskew[,1], e_b=plot_FAfrontier_rskew[,2]), aes(x = e_r, y = e_b), color="black", fill="lightsteelblue3", linewidth=0.2, alpha=0.5) +
+  geom_polygon(aes(x=e_r, y=e_b), colour='pink', fill='lavenderblush', alpha = 0.5) +
+  xlim(c(.15, .85)) + ylim(c(.2, .75)) +
+  theme_classic() +
+  geom_point(data = plot_RB_rskew,
+             aes(x = e_r, y = e_b, color=type, shape=type),
+             size=2.5) +
+  scale_shape_manual("", values=c("alg_logit"=8, "true F"=13,
+                                  "true R"=13, "true B"=13)) +
+  scale_color_manual("", values=c("alg_logit"="darkgreen",
+                                  "true R"="red", 
+                                  "true B"="deepskyblue", 
+                                  "true F"="black")) +
+  geom_abline(intercept=0, slope=1, linetype="dashed", color="lightgray", linewidth=.25) +
+  labs(title="r-skewed feasible set",
+       x=TeX("$e_r$"),
+       y=TeX("$e_b$"))
+
+grid.arrange(
+  arrangeGrob(p3 + theme(legend.position = "none"), p4 + theme(legend.position = "none"), ncol=2),
+  legend,
+  ncol = 2,
+  widths = c(3, 0.5)
+)
+```

@@ -1,0 +1,19 @@
+# History files
+.Rhistory
+.Rapp.history
+.RData
+._*
+
+# Compiled Python
+*.pyc
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# macOS
+*.DS_Store
+.AppleDouble
+.LSOverride
+
+# data
+data.csv

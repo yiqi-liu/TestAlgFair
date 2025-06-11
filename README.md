@@ -16,13 +16,15 @@ Before running each `.R` file, make sure the working directory is set to the dir
   * run `simulation/code/test2-LDA/test2n[size]k.R` for the middle panel reporting the LDA test results;
   * run `simulation/code/test3-FDistance/test3n[size]k.R` for the bottom panel reporting the Distance-to-F test results.
 
-  If running on a SLURM cluster, the output directory is specified in the `run.slurm` file contained in folders `test1-weak-skew`, `test2-LDA`, and `test3-FDistance`, and outputs are saved in `.txt` files to the corresponding `simulation/results` directory. If running on PC, results will be printed directly in the RStudio console.
+  If running on a SLURM cluster, the output directory is specified in the `run.slurm` file contained in folders `test1-weak-skew`, `test2-LDA`, and `test3-FDistance`, and outputs are saved as `.txt` files to the corresponding `simulation/results` directory. If running on PC, results will be printed directly in the RStudio console.
 
-- To replicate Figures 6-7 and Table II, run `application/code/rf/hypTest-rf.R`. Results will be saved to `application/results/hypTest-results/rf/hypTest-rf.html`.
-  * To replicate Figures C.1-C.2 and Table C.1, run `application/code/lasso/hypTest-lasso.R`. Results will be saved to `application/results/hypTest-results/lasso/hypTest-lasso.html`
+- To replicate Figures 6-7 and Table II, run `application/code/rf/hypTest-rf.R`. Results will be saved as `application/results/hypTest-results/rf/hypTest-rf.html`.
+  * To replicate Figures C.1-C.2 and Table C.1, run `application/code/lasso/hypTest-lasso.R`. Results will be saved as `application/results/hypTest-results/lasso/hypTest-lasso.html`
  
 - To replicate Figure 8 and Table III, run `application/code/rf/buildAlg-rf.R`. Results will be saved as `application/results/buildAlg-results/rf/alt-alg-f1a.png` (Figure 8) and `application/results/buildAlg-results/rf/table_frac_bl_trt.csv` (Table III).
-  * To replicate Figure C.XX and Table C.XX, run `application/code/lasso/buildAlg-lasso.R`. Results will be saved as `application/results/buildAlg-results/lasso/alt-alg-f1a.png` (Figure C.XX) and `application/results/buildAlg-results/lasso/table_frac_bl_trt.csv` (Table C.XX).
+  * To replicate Figure C.3 and Table C.II, run `application/code/lasso/buildAlg-lasso.R`. Results will be saved as `application/results/buildAlg-results/lasso/alt-alg-f1a.png` (Figure C.3) and `application/results/buildAlg-results/lasso/table_frac_bl_trt.csv` (Table C.II).
+
+- To replicate Tables C.III and C.IV, run `application/code/variability.R`. Results will be saved as `application/results/rep-results/variability.html`.
 
 ## Data Structure
 - File `all-func.R` includes all functions needed to implement the statistical procedures proposed in the paper. By default, `all-func.R` expects multiple CPUs for parallelization via
@@ -37,10 +39,10 @@ Before running each `.R` file, make sure the working directory is set to the dir
 - Folder `application` includes relevant files for running the empirical application:
     * folder `code` contains code that generates the results in tables and figures. It has two sub-folders, `lasso` and `rf`, each including the following files for the corresponding `[method]`$\in${`"lasso"`, `"rf"`} used for estimating the nuisance parameters:
         - `hypTest-[method].R` for implementing the three hypothesis tests introduced in Section 6. It calls `../results/hypTest-results/hypTest-[method].Rmd` to generate `../results/hypTest-results/hypTest-[method].html` that contains the results in Table II and Figures 6-7 for `[method]`=`"rf"`, and Figures C.1-C.2 and Table C.1 for `[method]`=`"lasso"`;
-        - `buildAlg-[method].R` for building new algorithms on the fairness-accuracy frontier introduced in Section 5.4 that generates Figure 8 in `../../results/buildAlg-results/rf/alt-alg-f1a.png` and Table III in `../../results/buildAlg-results/rf/table_frac_bl_trt.csv` for `[method]`=`"rf"`, and Figure XXX in `../../results/buildAlg-results/lasso/alt-alg-f1a.png` and Table XXX in `../../results/buildAlg-results/lasso/table_frac_bl_trt.csv` for `[method]`=`"lasso"`;
-        - `rep-[method].R` for repeating the three hypothesis tests 20 times to assess the variability of the empirical results due to randomness in the nuisance estimators. Results are saved to `../../results/rep-results/rep-[method].csv`
+        - `buildAlg-[method].R` for building new algorithms on the fairness-accuracy frontier introduced in Section 5.4 that generates Figure 8 in `../../results/buildAlg-results/rf/alt-alg-f1a.png` and Table III in `../../results/buildAlg-results/rf/table_frac_bl_trt.csv` for `[method]`=`"rf"`, and Figure C.3 in `../../results/buildAlg-results/lasso/alt-alg-f1a.png` and Table C.II in `../../results/buildAlg-results/lasso/table_frac_bl_trt.csv` for `[method]`=`"lasso"`;
+        - `rep-[method].R` for repeating the empirical exercise 20 times to assess the variability of the empirical results due to randomness in the nuisance estimators. Results are saved to `../../results/rep-results/rep-[method].csv`
           
-      Folder `code` also includes the file `variability.R` that uses the `.csv` results generated by `[method]/rep-[method].R` to produce *NTC*Table*NTC*;
+      Folder `code` also includes the file `variability.R` that uses the `.csv` results generated by `[method]/rep-[method].R` to produce Tables C.III and C.IV in `../results/rep-results/variability.html`;
     * folder `results` collects the output from running the files in `code`;
         - folder `hypTest-results` collects the produced `hypTest-[method].html` files from calling `../code/[method]/hypTest-[method].R`;
         - folder `buildAlg-results/[method]` collects `.png` figures and `.csv` files generated from running `../code/[method]/buildAlg-[method].R`;
@@ -70,4 +72,4 @@ Before running each `.R` file, make sure the working directory is set to the dir
 We note that results based on random forests trained using the [`grf`](https://grf-labs.github.io/grf/index.html) package is not guaranteed to be reproducible across platforms, even if the same `R` seed is used; see the discussion [here](https://grf-labs.github.io/grf/REFERENCE.html#forests-predict-different-values-depending-on-the-platform-even-though-the-seed-is-the-same). 
 Tests involving optimization via stochastic gradient descent implemented by the [`torch`](https://torch.mlverse.org/) package is also not reproducible even after setting the same seed (see the discussion [here](https://github.com/mlverse/torch/issues/1311)), which will affect the reproducibility of the $F$ estimate---and consequently the distance-to-F test in both the simulation study and the empirical application. 
 
-For these reasons, we assess and report the variability of the empirical results by replicating the tests 20 times in *NTC*Table*NTC*. For the simulation study, we expect cross-platform variability to be trivial, as the simulation results are already averaged across 1000 replications.
+For these reasons, we assess and report the variability of the empirical results by repeating the entire empirical exercise 20 times (see Appendix C of the paper). For the simulation study, we expect cross-platform variability to be trivial, as the simulation results are already averaged across 1000 replications.

@@ -1,5 +1,5 @@
 # TestAlgFair
-The folder `replication-package` inclues the data and code needed for replicating the Monte Carlo simulation and empirical application in Section 8 and Appendix C of [Liu and Molinari (2025)](https://arxiv.org/abs/2402.08879). With proper multithreading configurations, the replication takes about 8 days to finish on a single-node SLURM cluster with 256 cores and
+The folder `replication-package` inclues the data and code needed for replicating the Monte Carlo simulation and empirical application in Section 8 and Appendix C of [Liu and Molinari (2025)](https://arxiv.org/abs/2402.08879). With proper multithreading configurations, the replication takes about 8 days to finish on two single-node SLURM clusters with 256 and 112 cores, respectively, and
 ```
 > sessionInfo()
 R version 4.4.3 (2025-02-28)

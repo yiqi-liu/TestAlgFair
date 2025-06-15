@@ -11,6 +11,7 @@ BLAS/LAPACK: /usr/lib64/libopenblas-r0.3.26.so;  LAPACK version 3.12.0
 ```
 ### TL;DR
 Before running each `.R` file, make sure the working directory is set to the directory of the current `.R` file.
+- To replicate Figure 5, run `simulation/code/simulation-DGPplot.R`. Results will be saved as `simulation/results/simulation-DGPplot.html`. 
 - To replicate the simulation results in Table I, for `[size]`$\in${1, 5, 10} denoting the sample size in thousands:
   * run `simulation/code/test1-weak-skew/test1n[size]k.R` for the top panel reporting the weak group skew test results;
   * run `simulation/code/test2-LDA/test2n[size]k.R` for the middle panel reporting the LDA test results;
